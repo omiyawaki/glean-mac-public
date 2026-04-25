@@ -15,8 +15,15 @@ final class BacklogStore {
     private let endpoint = URL(string: "http://backend.example.com:8765/api/backlog")!
     private let minSpinnerDuration: Duration = .milliseconds(700)
 
-    func load() async {
-        isLoading = true
+    /// Fetch the latest backlog from the backend.
+    /// - Parameter silent: When true (push-driven refresh), the spinner is
+    ///   suppressed and rows just diff in via .smooth — no overt feedback,
+    ///   matching how Mail handles incoming push. The spinner still appears
+    ///   on the very first load even when silent is true, since otherwise
+    ///   there's nothing on screen.
+    func load(silent: Bool = false) async {
+        let showSpinner = !silent || !hasLoadedOnce
+        if showSpinner { isLoading = true }
         let started = ContinuousClock.now
 
         do {
@@ -26,8 +33,10 @@ final class BacklogStore {
             guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
                 let code = (response as? HTTPURLResponse)?.statusCode ?? -1
                 lastError = "HTTP \(code)"
-                await holdSpinner(since: started)
-                isLoading = false
+                if showSpinner {
+                    await holdSpinner(since: started)
+                    isLoading = false
+                }
                 return
             }
             let decoder = JSONDecoder()
@@ -44,8 +53,10 @@ final class BacklogStore {
             lastError = error.localizedDescription
         }
 
-        await holdSpinner(since: started)
-        isLoading = false
+        if showSpinner {
+            await holdSpinner(since: started)
+            isLoading = false
+        }
     }
 
     /// Ensure the spinner is visible long enough to register as feedback,

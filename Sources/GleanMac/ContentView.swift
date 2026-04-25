@@ -24,6 +24,11 @@ enum SidebarItem: String, Hashable, CaseIterable, Identifiable {
 struct ContentView: View {
     @State private var selection: SidebarItem? = .backlog
     @State private var backlogStore = BacklogStore()
+    @State private var eventStream: EventStream?
+
+    private static let eventsURL = URL(
+        string: "http://backend.example.com:8765/events"
+    )!
 
     var body: some View {
         NavigationSplitView {
@@ -47,6 +52,15 @@ struct ContentView: View {
                     systemImage: "sidebar.left"
                 )
             }
+        }
+        .task {
+            guard eventStream == nil else { return }
+            let store = backlogStore
+            let stream = EventStream(url: Self.eventsURL) {
+                await store.load(silent: true)
+            }
+            stream.start()
+            eventStream = stream
         }
     }
 }
