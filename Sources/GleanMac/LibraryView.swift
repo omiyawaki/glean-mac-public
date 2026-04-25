@@ -2,6 +2,7 @@ import SwiftUI
 
 struct LibraryView: View {
     let store: LibraryStore
+    @Binding var selection: String?
     @State private var now = Date()
     @State private var query = ""
 
@@ -23,11 +24,11 @@ struct LibraryView: View {
                     ProgressView().controlSize(.large)
                 }
             } else {
-                List {
+                List(selection: $selection) {
                     ForEach(grouped, id: \.year) { group in
                         Section(group.year.map { String($0) } ?? "Undated") {
                             ForEach(group.entries) { entry in
-                                LibraryRow(entry: entry)
+                                LibraryRow(entry: entry).tag(entry.id)
                             }
                         }
                     }
@@ -74,7 +75,7 @@ struct LibraryView: View {
         }
         return byYear.keys.sorted { (a, b) in
             switch (a, b) {
-            case (nil, _): return false  // undated last
+            case (nil, _): return false
             case (_, nil): return true
             case (let x?, let y?): return x > y
             default: return false

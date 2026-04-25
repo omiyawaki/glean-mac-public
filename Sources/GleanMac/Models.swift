@@ -91,3 +91,46 @@ struct LibraryResponse: Codable {
     let entries: [LibraryEntry]
 }
 
+struct LibraryAttachment: Codable, Hashable {
+    let path: String
+    let kind: String
+}
+
+/// Detail-pane payload from /api/papers/<citekey>. Most fields are
+/// optional because not every record has them filled in.
+struct LibraryRecord: Codable, Hashable, Identifiable {
+    let citekey: String
+    let type: String?
+    let title: String
+    let year: Int?
+    let doi: String?
+    let arxiv: String?
+    let isbn: String?
+    let pmid: String?
+    let pmcid: String?
+    let journal: String?
+    let volume: String?
+    let issue: String?
+    let pages: String?
+    let publisher: String?
+    let url: String?
+    let abstract: String?
+    let keywords: [String]
+    let authors: [LibraryAuthor]
+    let attachments: [LibraryAttachment]
+    let addedAt: String?
+    let modifiedAt: String?
+    let read: Bool
+    let notes: String?
+
+    var id: String { citekey }
+
+    enum CodingKeys: String, CodingKey {
+        case citekey, type, title, year, doi, arxiv, isbn, pmid, pmcid
+        case journal, volume, issue, pages, publisher, url, abstract
+        case keywords, authors, attachments, read, notes
+        case addedAt = "added_at"
+        case modifiedAt = "modified_at"
+    }
+}
+

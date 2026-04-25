@@ -3,6 +3,7 @@ import SwiftUI
 struct BacklogView: View {
     let store: BacklogStore
     let uploads: UploadStore
+    @Binding var selection: String?
     @State private var now = Date()
     @State private var actionError: String?
     @State private var showError = false
@@ -25,7 +26,7 @@ struct BacklogView: View {
                     ProgressView().controlSize(.large)
                 }
             } else {
-                List {
+                List(selection: $selection) {
                     if !uploads.entries.isEmpty {
                         Section("Uploading") {
                             ForEach(uploads.entries) { upload in
@@ -35,7 +36,7 @@ struct BacklogView: View {
                     }
                     Section {
                         ForEach(store.entries) { entry in
-                            BacklogRow(entry: entry)
+                            BacklogRow(entry: entry).tag(entry.id)
                         }
                     }
                 }
