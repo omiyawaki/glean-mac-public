@@ -68,3 +68,26 @@ struct AuthorProposalsResponse: Codable {
     let count: Int
     let entries: [AuthorProposal]
 }
+
+// MARK: - Library
+
+struct LibraryAuthor: Codable, Hashable {
+    let family: String
+    let given: String
+}
+
+struct LibraryEntry: Codable, Identifiable, Hashable {
+    let citekey: String
+    let title: String
+    let year: Int?
+    let doi: String?
+    let authors: [LibraryAuthor]
+
+    var id: String { citekey }
+}
+
+struct LibraryResponse: Codable {
+    let count: Int
+    let entries: [LibraryEntry]
+}
+

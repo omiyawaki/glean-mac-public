@@ -32,6 +32,7 @@ struct ContentView: View {
     @State private var backlogStore = BacklogStore()
     @State private var reviewStore = ReviewStore()
     @State private var authorStore = AuthorStore()
+    @State private var libraryStore = LibraryStore()
     @State private var uploadStore = UploadStore()
     @State private var eventStream: EventStream?
 
@@ -69,11 +70,7 @@ struct ContentView: View {
             case .authorProposals:
                 AuthorProposalsView(store: authorStore)
             case .libraryAll:
-                ContentUnavailableView(
-                    "Library",
-                    systemImage: "books.vertical",
-                    description: Text("Coming soon.")
-                )
+                LibraryView(store: libraryStore)
             case .none:
                 ContentUnavailableView(
                     "Select a section",
