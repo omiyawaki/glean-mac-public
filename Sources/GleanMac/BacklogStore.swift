@@ -13,10 +13,11 @@ final class BacklogStore {
     var lastRefreshedAt: Date? = nil
 
     private let endpoint = URL(string: "http://backend.example.com:8765/api/backlog")!
+    private let minSpinnerDuration: Duration = .milliseconds(700)
 
     func load() async {
         isLoading = true
-        defer { isLoading = false }
+        let started = ContinuousClock.now
 
         do {
             var request = URLRequest(url: endpoint)
@@ -25,6 +26,8 @@ final class BacklogStore {
             guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
                 let code = (response as? HTTPURLResponse)?.statusCode ?? -1
                 lastError = "HTTP \(code)"
+                await holdSpinner(since: started)
+                isLoading = false
                 return
             }
             let decoder = JSONDecoder()
@@ -39,6 +42,20 @@ final class BacklogStore {
             }
         } catch {
             lastError = error.localizedDescription
+        }
+
+        await holdSpinner(since: started)
+        isLoading = false
+    }
+
+    /// Ensure the spinner is visible long enough to register as feedback,
+    /// even when the underlying operation finishes faster than the eye can
+    /// perceive. Apple-precedented: native refresh affordances always show
+    /// at least one perceivable cycle of the indicator.
+    private func holdSpinner(since started: ContinuousClock.Instant) async {
+        let elapsed = ContinuousClock.now - started
+        if elapsed < minSpinnerDuration {
+            try? await Task.sleep(for: minSpinnerDuration - elapsed)
         }
     }
 }
