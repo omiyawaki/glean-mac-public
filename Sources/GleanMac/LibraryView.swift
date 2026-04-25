@@ -37,7 +37,7 @@ struct LibraryView: View {
         }
         .navigationTitle("All Papers")
         .navigationSubtitle(subtitle)
-        .searchable(text: $query, placement: .toolbar, prompt: "Search title or author")
+        .searchable(text: $query, prompt: "Search title or author")
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 RefreshButton(isLoading: store.isLoading) {
