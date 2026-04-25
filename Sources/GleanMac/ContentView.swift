@@ -1,22 +1,28 @@
 import SwiftUI
 
-enum SidebarItem: String, Hashable, CaseIterable, Identifiable {
-    case library
+enum SidebarItem: String, Hashable, Identifiable, CaseIterable {
+    case libraryAll
     case backlog
+    case maybeReview
+    case authorProposals
 
     var id: String { rawValue }
 
     var label: String {
         switch self {
-        case .library: "Library"
-        case .backlog: "Intake"
+        case .libraryAll: "All Papers"
+        case .backlog: "Backlog"
+        case .maybeReview: "Maybe Review"
+        case .authorProposals: "Author Proposals"
         }
     }
 
     var systemImage: String {
         switch self {
-        case .library: "books.vertical"
+        case .libraryAll: "books.vertical"
         case .backlog: "tray.and.arrow.down"
+        case .maybeReview: "questionmark.circle"
+        case .authorProposals: "person.crop.circle.badge.plus"
         }
     }
 }
@@ -24,6 +30,9 @@ enum SidebarItem: String, Hashable, CaseIterable, Identifiable {
 struct ContentView: View {
     @State private var selection: SidebarItem? = .backlog
     @State private var backlogStore = BacklogStore()
+    @State private var reviewStore = ReviewStore()
+    @State private var authorStore = AuthorStore()
+    @State private var uploadStore = UploadStore()
     @State private var eventStream: EventStream?
 
     private static let eventsURL = URL(
@@ -32,15 +41,34 @@ struct ContentView: View {
 
     var body: some View {
         NavigationSplitView {
-            List(SidebarItem.allCases, selection: $selection) { item in
-                Label(item.label, systemImage: item.systemImage).tag(item)
+            List(selection: $selection) {
+                Section("Library") {
+                    Label(SidebarItem.libraryAll.label,
+                          systemImage: SidebarItem.libraryAll.systemImage)
+                        .tag(SidebarItem.libraryAll)
+                }
+                Section("Intake") {
+                    Label(SidebarItem.backlog.label,
+                          systemImage: SidebarItem.backlog.systemImage)
+                        .tag(SidebarItem.backlog)
+                    Label(SidebarItem.maybeReview.label,
+                          systemImage: SidebarItem.maybeReview.systemImage)
+                        .tag(SidebarItem.maybeReview)
+                    Label(SidebarItem.authorProposals.label,
+                          systemImage: SidebarItem.authorProposals.systemImage)
+                        .tag(SidebarItem.authorProposals)
+                }
             }
             .navigationTitle("glean")
         } detail: {
             switch selection {
             case .backlog:
-                BacklogView(store: backlogStore)
-            case .library:
+                BacklogView(store: backlogStore, uploads: uploadStore)
+            case .maybeReview:
+                MaybeReviewView(store: reviewStore)
+            case .authorProposals:
+                AuthorProposalsView(store: authorStore)
+            case .libraryAll:
                 ContentUnavailableView(
                     "Library",
                     systemImage: "books.vertical",
@@ -55,9 +83,14 @@ struct ContentView: View {
         }
         .task {
             guard eventStream == nil else { return }
-            let store = backlogStore
+            let backlog = backlogStore
+            let review = reviewStore
+            let author = authorStore
             let stream = EventStream(url: Self.eventsURL) {
-                await store.load(silent: true)
+                async let a: Void = backlog.load(silent: true)
+                async let b: Void = review.load(silent: true)
+                async let c: Void = author.load(silent: true)
+                _ = await (a, b, c)
             }
             stream.start()
             eventStream = stream

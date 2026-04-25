@@ -2,7 +2,10 @@ import SwiftUI
 
 struct BacklogView: View {
     let store: BacklogStore
+    let uploads: UploadStore
     @State private var now = Date()
+    @State private var actionError: String?
+    @State private var showError = false
 
     private let ticker = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
 
@@ -22,12 +25,23 @@ struct BacklogView: View {
                     ProgressView().controlSize(.large)
                 }
             } else {
-                List(store.entries) { entry in
-                    BacklogRow(entry: entry)
+                List {
+                    if !uploads.entries.isEmpty {
+                        Section("Uploading") {
+                            ForEach(uploads.entries) { upload in
+                                UploadingRow(filename: upload.filename)
+                            }
+                        }
+                    }
+                    Section {
+                        ForEach(store.entries) { entry in
+                            BacklogRow(entry: entry)
+                        }
+                    }
                 }
             }
         }
-        .navigationTitle("Intake")
+        .navigationTitle("Backlog")
         .navigationSubtitle(subtitle)
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
@@ -45,11 +59,30 @@ struct BacklogView: View {
             }
         }
         .task {
-            if !store.hasLoadedOnce {
-                await store.load()
-            }
+            if !store.hasLoadedOnce { await store.load() }
         }
         .onReceive(ticker) { now = $0 }
+        .dropDestination(for: URL.self) { urls, _ in
+            let pdfs = urls.filter { $0.pathExtension.lowercased() == "pdf" }
+            for url in pdfs {
+                Task {
+                    do {
+                        try await uploads.upload(url)
+                    } catch {
+                        actionError = error.localizedDescription
+                        showError = true
+                    }
+                }
+            }
+            return !pdfs.isEmpty
+        }
+        .alert("Upload failed",
+               isPresented: $showError,
+               presenting: actionError) { _ in
+            Button("OK", role: .cancel) { }
+        } message: { message in
+            Text(message)
+        }
     }
 
     private var subtitle: String {
@@ -70,7 +103,7 @@ struct BacklogView: View {
     }
 }
 
-struct BacklogRow: View {
+private struct BacklogRow: View {
     let entry: BacklogEntry
 
     var body: some View {
@@ -86,6 +119,21 @@ struct BacklogRow: View {
                     .font(.subheadline)
                     .foregroundStyle(.tertiary)
             }
+        }
+        .padding(.vertical, 2)
+    }
+}
+
+private struct UploadingRow: View {
+    let filename: String
+
+    var body: some View {
+        HStack(spacing: 10) {
+            ProgressView().controlSize(.small)
+            Text(filename)
+                .font(.subheadline)
+                .lineLimit(1)
+            Spacer()
         }
         .padding(.vertical, 2)
     }
