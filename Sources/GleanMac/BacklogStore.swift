@@ -10,6 +10,7 @@ final class BacklogStore {
     var isLoading: Bool = false
     var lastError: String? = nil
     var hasLoadedOnce: Bool = false
+    var lastRefreshedAt: Date? = nil
 
     private let endpoint = URL(string: "http://backend.example.com:8765/api/backlog")!
 
@@ -34,6 +35,7 @@ final class BacklogStore {
                 count = payload.count
                 lastError = nil
                 hasLoadedOnce = true
+                lastRefreshedAt = Date()
             }
         } catch {
             lastError = error.localizedDescription

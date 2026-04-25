@@ -2,6 +2,9 @@ import SwiftUI
 
 struct BacklogView: View {
     @State private var store = BacklogStore()
+    @State private var now = Date()
+
+    private let ticker = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
 
     var body: some View {
         Group {
@@ -28,20 +31,38 @@ struct BacklogView: View {
         .navigationSubtitle(subtitle)
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
-                Button("Refresh", systemImage: "arrow.clockwise") {
+                Button {
                     Task { await store.load() }
+                } label: {
+                    if store.isLoading {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Label("Refresh", systemImage: "arrow.clockwise")
+                    }
                 }
                 .disabled(store.isLoading)
+                .help("Refresh")
             }
         }
         .task { await store.load() }
+        .onReceive(ticker) { now = $0 }
     }
 
     private var subtitle: String {
         guard store.hasLoadedOnce else { return "" }
-        return store.count == 1
+        let countPart = store.count == 1
             ? "1 paper awaiting PDF"
             : "\(store.count) papers awaiting PDFs"
+        guard let when = store.lastRefreshedAt else { return countPart }
+        return "\(countPart) • \(relativeUpdated(from: when))"
+    }
+
+    private func relativeUpdated(from when: Date) -> String {
+        let delta = now.timeIntervalSince(when)
+        if delta < 60 { return "Updated just now" }
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .short
+        return "Updated " + formatter.localizedString(for: when, relativeTo: now)
     }
 }
 
