@@ -45,17 +45,9 @@ struct AuthorProposalsView: View {
         .navigationSubtitle(subtitle)
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
-                Button {
-                    Task { await store.load() }
-                } label: {
-                    if store.isLoading {
-                        ProgressView().controlSize(.small)
-                    } else {
-                        Label("Refresh", systemImage: "arrow.clockwise")
-                    }
+                RefreshButton(isLoading: store.isLoading) {
+                    await store.load()
                 }
-                .disabled(store.isLoading)
-                .help("Refresh")
             }
         }
         .task {
@@ -93,15 +85,7 @@ struct AuthorProposalsView: View {
             ? "1 author proposed"
             : "\(store.count) authors proposed"
         guard let when = store.lastRefreshedAt else { return countPart }
-        return "\(countPart) • \(relativeUpdated(from: when))"
-    }
-
-    private func relativeUpdated(from when: Date) -> String {
-        let delta = now.timeIntervalSince(when)
-        if delta < 60 { return "Updated just now" }
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .short
-        return "Updated " + formatter.localizedString(for: when, relativeTo: now)
+        return "\(countPart) • \(relativeUpdated(from: when, to: now))"
     }
 }
 

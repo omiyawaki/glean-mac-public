@@ -12,10 +12,10 @@ final class EventStream {
     var isConnected: Bool = false
 
     private let url: URL
-    private let onEvent: () async -> Void
+    private let onEvent: (String) async -> Void
     private var task: Task<Void, Never>?
 
-    init(url: URL, onEvent: @escaping () async -> Void) {
+    init(url: URL, onEvent: @escaping (String) async -> Void) {
         self.url = url
         self.onEvent = onEvent
     }
@@ -65,13 +65,16 @@ final class EventStream {
 
         for try await line in stream.lines {
             if Task.isCancelled { break }
-            // SSE lines we care about start with "event: <name>". Comments
-            // (":keepalive") and empty separator lines are ignored. Every
-            // event from the backend means "refetch" — we don't differentiate names
-            // beyond filtering out the initial "ready" hello (which would
-            // duplicate the on-launch fetch already triggered by .task).
-            if line.hasPrefix("event: state-changed") {
-                await onEvent()
+            // SSE protocol: lines starting with "event: <name>" mark
+            // each named event; comments (":keepalive") and empty
+            // separators are ignored. The "ready" hello from the
+            // server is forwarded too — the dispatcher decides what to
+            // do with it (typically nothing, since .task on the views
+            // already runs an initial fetch).
+            let prefix = "event: "
+            if line.hasPrefix(prefix) {
+                let name = String(line.dropFirst(prefix.count))
+                await onEvent(name)
             }
         }
     }

@@ -29,10 +29,10 @@ enum SidebarItem: String, Hashable, Identifiable, CaseIterable {
 
 struct ContentView: View {
     @State private var selection: SidebarItem? = .backlog
-    @State private var backlogStore = BacklogStore()
-    @State private var reviewStore = ReviewStore()
-    @State private var authorStore = AuthorStore()
-    @State private var libraryStore = LibraryStore()
+    @State private var backlogStore = Stores.backlog()
+    @State private var reviewStore = Stores.review()
+    @State private var authorStore = Stores.author()
+    @State private var libraryStore = Stores.library()
     @State private var uploadStore = UploadStore()
     @State private var eventStream: EventStream?
 
@@ -83,11 +83,19 @@ struct ContentView: View {
             let backlog = backlogStore
             let review = reviewStore
             let author = authorStore
-            let stream = EventStream(url: Self.eventsURL) {
-                async let a: Void = backlog.load(silent: true)
-                async let b: Void = review.load(silent: true)
-                async let c: Void = author.load(silent: true)
-                _ = await (a, b, c)
+            let library = libraryStore
+            let stream = EventStream(url: Self.eventsURL) { event in
+                switch event {
+                case "intake-changed":
+                    async let a: Void = backlog.load(silent: true)
+                    async let b: Void = review.load(silent: true)
+                    async let c: Void = author.load(silent: true)
+                    _ = await (a, b, c)
+                case "library-changed":
+                    await library.load(silent: true)
+                default:
+                    break  // "ready" hello and unknown events: no-op
+                }
             }
             stream.start()
             eventStream = stream

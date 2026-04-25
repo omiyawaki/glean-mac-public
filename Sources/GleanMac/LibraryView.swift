@@ -39,17 +39,9 @@ struct LibraryView: View {
         .searchable(text: $query, placement: .toolbar, prompt: "Search title or author")
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
-                Button {
-                    Task { await store.load() }
-                } label: {
-                    if store.isLoading {
-                        ProgressView().controlSize(.small)
-                    } else {
-                        Label("Refresh", systemImage: "arrow.clockwise")
-                    }
+                RefreshButton(isLoading: store.isLoading) {
+                    await store.load()
                 }
-                .disabled(store.isLoading)
-                .help("Refresh")
             }
         }
         .task {
@@ -101,15 +93,7 @@ struct LibraryView: View {
             countPart = "\(visible) of \(total) papers"
         }
         guard let when = store.lastRefreshedAt else { return countPart }
-        return "\(countPart) • \(relativeUpdated(from: when))"
-    }
-
-    private func relativeUpdated(from when: Date) -> String {
-        let delta = now.timeIntervalSince(when)
-        if delta < 60 { return "Updated just now" }
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .short
-        return "Updated " + formatter.localizedString(for: when, relativeTo: now)
+        return "\(countPart) • \(relativeUpdated(from: when, to: now))"
     }
 }
 
