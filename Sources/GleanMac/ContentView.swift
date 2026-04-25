@@ -9,7 +9,7 @@ enum SidebarItem: String, Hashable, CaseIterable, Identifiable {
     var label: String {
         switch self {
         case .library: "Library"
-        case .backlog: "Intake Backlog"
+        case .backlog: "Intake"
         }
     }
 

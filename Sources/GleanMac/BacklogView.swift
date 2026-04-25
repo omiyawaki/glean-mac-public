@@ -5,41 +5,43 @@ struct BacklogView: View {
 
     var body: some View {
         Group {
-            switch store.state {
-            case .idle, .loading:
-                ProgressView().controlSize(.large)
-            case .loaded(let payload):
-                List(payload.entries) { entry in
-                    BacklogRow(entry: entry)
+            if !store.hasLoadedOnce {
+                if let message = store.lastError {
+                    ContentUnavailableView {
+                        Label("Couldn't load backlog", systemImage: "exclamationmark.triangle")
+                    } description: {
+                        Text(message)
+                    } actions: {
+                        Button("Retry") { Task { await store.load() } }
+                            .buttonStyle(.glassProminent)
+                    }
+                } else {
+                    ProgressView().controlSize(.large)
                 }
-            case .failed(let message):
-                ContentUnavailableView {
-                    Label("Couldn't load backlog", systemImage: "exclamationmark.triangle")
-                } description: {
-                    Text(message)
-                } actions: {
-                    Button("Retry") { Task { await store.load() } }
-                        .buttonStyle(.glassProminent)
+            } else {
+                List(store.entries) { entry in
+                    BacklogRow(entry: entry)
                 }
             }
         }
-        .navigationTitle("Intake Backlog")
+        .navigationTitle("Intake")
         .navigationSubtitle(subtitle)
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button("Refresh", systemImage: "arrow.clockwise") {
                     Task { await store.load() }
                 }
+                .disabled(store.isLoading)
             }
         }
         .task { await store.load() }
     }
 
     private var subtitle: String {
-        if case .loaded(let payload) = store.state {
-            return "\(payload.count) papers awaiting PDFs"
-        }
-        return ""
+        guard store.hasLoadedOnce else { return "" }
+        return store.count == 1
+            ? "1 paper awaiting PDF"
+            : "\(store.count) papers awaiting PDFs"
     }
 }
 

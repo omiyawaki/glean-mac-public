@@ -1,37 +1,42 @@
 import Foundation
 import Observation
+import SwiftUI
 
 @MainActor
 @Observable
 final class BacklogStore {
-    enum LoadState {
-        case idle
-        case loading
-        case loaded(BacklogResponse)
-        case failed(String)
-    }
-
-    var state: LoadState = .idle
+    var entries: [BacklogEntry] = []
+    var count: Int = 0
+    var isLoading: Bool = false
+    var lastError: String? = nil
+    var hasLoadedOnce: Bool = false
 
     private let endpoint = URL(string: "http://backend.example.com:8765/api/backlog")!
 
     func load() async {
-        state = .loading
+        isLoading = true
+        defer { isLoading = false }
+
         do {
             var request = URLRequest(url: endpoint)
             request.timeoutInterval = 8
             let (data, response) = try await URLSession.shared.data(for: request)
             guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
                 let code = (response as? HTTPURLResponse)?.statusCode ?? -1
-                state = .failed("HTTP \(code)")
+                lastError = "HTTP \(code)"
                 return
             }
             let decoder = JSONDecoder()
             decoder.dateDecodingStrategy = .iso8601
             let payload = try decoder.decode(BacklogResponse.self, from: data)
-            state = .loaded(payload)
+            withAnimation(.smooth) {
+                entries = payload.entries
+                count = payload.count
+                lastError = nil
+                hasLoadedOnce = true
+            }
         } catch {
-            state = .failed(error.localizedDescription)
+            lastError = error.localizedDescription
         }
     }
 }
