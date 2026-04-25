@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct BacklogView: View {
-    @State private var store = BacklogStore()
+    let store: BacklogStore
     @State private var now = Date()
 
     private let ticker = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
@@ -44,7 +44,11 @@ struct BacklogView: View {
                 .help("Refresh")
             }
         }
-        .task { await store.load() }
+        .task {
+            if !store.hasLoadedOnce {
+                await store.load()
+            }
+        }
         .onReceive(ticker) { now = $0 }
     }
 

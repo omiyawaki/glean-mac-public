@@ -23,6 +23,7 @@ enum SidebarItem: String, Hashable, CaseIterable, Identifiable {
 
 struct ContentView: View {
     @State private var selection: SidebarItem? = .backlog
+    @State private var backlogStore = BacklogStore()
 
     var body: some View {
         NavigationSplitView {
@@ -33,7 +34,7 @@ struct ContentView: View {
         } detail: {
             switch selection {
             case .backlog:
-                BacklogView()
+                BacklogView(store: backlogStore)
             case .library:
                 ContentUnavailableView(
                     "Library",
