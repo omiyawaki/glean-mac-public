@@ -9,26 +9,31 @@ struct LibraryView: View {
     private let ticker = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
 
     var body: some View {
-        Group {
-            if !store.hasLoadedOnce {
-                if let message = store.lastError {
-                    ContentUnavailableView {
-                        Label("Couldn't load library", systemImage: "exclamationmark.triangle")
-                    } description: {
-                        Text(message)
-                    } actions: {
-                        Button("Retry") { Task { await store.load() } }
-                            .buttonStyle(.glassProminent)
+        VStack(spacing: 0) {
+            SearchField(text: $query, placeholder: "Search title or author")
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+            Group {
+                if !store.hasLoadedOnce {
+                    if let message = store.lastError {
+                        ContentUnavailableView {
+                            Label("Couldn't load library", systemImage: "exclamationmark.triangle")
+                        } description: {
+                            Text(message)
+                        } actions: {
+                            Button("Retry") { Task { await store.load() } }
+                                .buttonStyle(.glassProminent)
+                        }
+                    } else {
+                        ProgressView().controlSize(.large)
                     }
                 } else {
-                    ProgressView().controlSize(.large)
-                }
-            } else {
-                List(selection: $selection) {
-                    ForEach(grouped, id: \.year) { group in
-                        Section(group.year.map { String($0) } ?? "Undated") {
-                            ForEach(group.entries) { entry in
-                                LibraryRow(entry: entry).tag(entry.id)
+                    List(selection: $selection) {
+                        ForEach(grouped, id: \.year) { group in
+                            Section(group.year.map { String($0) } ?? "Undated") {
+                                ForEach(group.entries) { entry in
+                                    LibraryRow(entry: entry).tag(entry.id)
+                                }
                             }
                         }
                     }
@@ -37,7 +42,6 @@ struct LibraryView: View {
         }
         .navigationTitle("All Papers")
         .navigationSubtitle(subtitle)
-        .searchable(text: $query, prompt: "Search title or author")
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 RefreshButton(isLoading: store.isLoading) {
