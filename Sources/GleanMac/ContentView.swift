@@ -31,6 +31,7 @@ struct ContentView: View {
     @State private var selection: SidebarItem? = .backlog
     @State private var backlogSelection: String?
     @State private var librarySelection: String?
+    @State private var libraryQuery = ""
     @State private var inspectorPresented = false
 
     @State private var backlogStore = Stores.backlog()
@@ -108,7 +109,9 @@ struct ContentView: View {
     private var content: some View {
         switch selection {
         case .libraryAll:
-            LibraryView(store: libraryStore, selection: $librarySelection)
+            LibraryView(store: libraryStore,
+                        selection: $librarySelection,
+                        query: $libraryQuery)
         case .backlog:
             BacklogView(store: backlogStore,
                         uploads: uploadStore,
@@ -132,7 +135,8 @@ struct ContentView: View {
             LibraryDetailView(
                 citekey: librarySelection,
                 store: libraryDetailStore,
-                inspectorPresented: $inspectorPresented
+                inspectorPresented: $inspectorPresented,
+                query: $libraryQuery
             )
         case .backlog:
             BacklogDetailView(

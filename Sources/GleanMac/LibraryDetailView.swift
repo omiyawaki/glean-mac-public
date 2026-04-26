@@ -47,6 +47,7 @@ struct LibraryDetailView: View {
     let citekey: String?
     let store: LibraryDetailStore
     @Binding var inspectorPresented: Bool
+    @Binding var query: String
 
     var body: some View {
         Group {
@@ -74,6 +75,9 @@ struct LibraryDetailView: View {
             }
         }
         .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                ExpandingSearch(query: $query, prompt: "Search title or author")
+            }
             ToolbarItem(placement: .primaryAction) {
                 Button {
                     inspectorPresented.toggle()

@@ -3,8 +3,8 @@ import SwiftUI
 struct LibraryView: View {
     let store: LibraryStore
     @Binding var selection: String?
+    @Binding var query: String
     @State private var now = Date()
-    @State private var query = ""
 
     private let ticker = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
 
@@ -38,9 +38,6 @@ struct LibraryView: View {
         .navigationTitle("All Papers")
         .navigationSubtitle(subtitle)
         .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                ExpandingSearch(query: $query, prompt: "Search title or author")
-            }
             ToolbarItem(placement: .primaryAction) {
                 RefreshButton(isLoading: store.isLoading) {
                     await store.load()
