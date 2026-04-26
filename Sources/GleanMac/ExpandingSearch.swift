@@ -23,6 +23,16 @@ struct ExpandingSearch: View {
             }
         }
         .animation(.smooth(duration: 0.22), value: isExpanded)
+        .task(id: isExpanded) {
+            // Focus must run after the TextField is in the hierarchy —
+            // setting @FocusState from the Button's action handler races
+            // the view teardown. .task(id:) fires on every transition;
+            // a small sleep covers the SwiftUI mount tick.
+            if isExpanded {
+                try? await Task.sleep(for: .milliseconds(50))
+                isFocused = true
+            }
+        }
         .onChange(of: isFocused) { _, focused in
             if !focused && query.isEmpty {
                 withAnimation(.smooth(duration: 0.22)) { isExpanded = false }
@@ -33,11 +43,6 @@ struct ExpandingSearch: View {
     private var collapsed: some View {
         Button {
             withAnimation(.smooth(duration: 0.22)) { isExpanded = true }
-            // Defer focus until the TextField has been mounted.
-            Task {
-                try? await Task.sleep(for: .milliseconds(60))
-                isFocused = true
-            }
         } label: {
             Image(systemName: "magnifyingglass")
         }
