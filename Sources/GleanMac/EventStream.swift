@@ -1,5 +1,8 @@
 import Foundation
 import Observation
+import os
+
+private let log = Logger(subsystem: "com.miyawaki.glean-mac", category: "events")
 
 /// Long-lived Server-Sent Events consumer. Connects to the backend's `/events`
 /// endpoint, listens for `state-changed` events, and invokes `onEvent`
@@ -41,9 +44,11 @@ final class EventStream {
                 try await connect()
                 backoff = .seconds(1)
             } catch is CancellationError {
+                log.debug("events: cancelled")
                 return
             } catch {
                 isConnected = false
+                log.warning("events: stream dropped error=\(error.localizedDescription, privacy: .public) backoff=\(String(describing: backoff), privacy: .public)")
                 if Task.isCancelled { return }
                 try? await Task.sleep(for: backoff)
                 backoff = min(backoff * 2, maxBackoff)
@@ -62,6 +67,7 @@ final class EventStream {
             throw URLError(.badServerResponse)
         }
         isConnected = true
+        log.debug("events: connected url=\(self.url.absoluteString, privacy: .public)")
 
         for try await line in stream.lines {
             if Task.isCancelled { break }
@@ -74,6 +80,7 @@ final class EventStream {
             let prefix = "event: "
             if line.hasPrefix(prefix) {
                 let name = String(line.dropFirst(prefix.count))
+                log.debug("events: received name=\(name, privacy: .public)")
                 await onEvent(name)
             }
         }

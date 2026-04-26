@@ -8,6 +8,11 @@ let package = Package(
         .executableTarget(
             name: "GleanMac",
             path: "Sources/GleanMac"
-        )
+        ),
+        .testTarget(
+            name: "GleanMacTests",
+            dependencies: ["GleanMac"],
+            path: "Tests/GleanMacTests"
+        ),
     ]
 )

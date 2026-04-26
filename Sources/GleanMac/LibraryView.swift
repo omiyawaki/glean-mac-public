@@ -5,7 +5,7 @@ struct LibraryView: View {
     @Binding var selection: String?
     @Binding var query: String
     @State private var now = Date()
-    @State private var grouped: [YearGroup] = []
+    @State private var grouped: [LibraryFilter.YearGroup] = []
     @State private var visibleCount: Int = 0
 
     private let ticker = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
@@ -60,47 +60,12 @@ struct LibraryView: View {
     }
 
     /// Recompute filter + year grouping into @State so the List sees a
-    /// stable value across body re-evaluations. Without this, the
-    /// grouped result was rebuilt on every render — including the
-    /// per-character renders triggered by the search field bindings —
-    /// and clearing a non-empty filter caused a beach-ball as SwiftUI
-    /// tried to redraw 5000+ rows in a single frame.
+    /// stable value across body re-evaluations. The pure logic lives
+    /// in LibraryFilter (covered by tests).
     private func recomputeGroups() {
-        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let entries: [LibraryEntry]
-        if q.isEmpty {
-            entries = store.entries
-        } else {
-            entries = store.entries.filter { entry in
-                if entry.title.lowercased().contains(q) { return true }
-                return entry.authors.contains { author in
-                    author.family.lowercased().contains(q)
-                        || author.given.lowercased().contains(q)
-                }
-            }
-        }
-
-        var byYear: [Int?: [LibraryEntry]] = [:]
-        byYear.reserveCapacity(120)
-        for e in entries {
-            byYear[e.year, default: []].append(e)
-        }
-        let newGrouped = byYear.keys.sorted { (a, b) in
-            switch (a, b) {
-            case (nil, _): return false
-            case (_, nil): return true
-            case (let x?, let y?): return x > y
-            default: return false
-            }
-        }.map { YearGroup(year: $0, entries: byYear[$0] ?? []) }
-
+        let entries = LibraryFilter.filter(store.entries, query: query)
         visibleCount = entries.count
-        grouped = newGrouped
-    }
-
-    fileprivate struct YearGroup: Equatable {
-        let year: Int?
-        let entries: [LibraryEntry]
+        grouped = LibraryFilter.groupByYear(entries)
     }
 
     private var subtitle: String {

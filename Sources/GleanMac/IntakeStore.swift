@@ -1,6 +1,9 @@
 import Foundation
 import Observation
 import SwiftUI
+import os
+
+private let log = Logger(subsystem: "com.miyawaki.glean-mac", category: "intake-store")
 
 /// Generic store backing every list view that fetches a paged
 /// `{count, entries}`-shaped payload. The four concrete stores
@@ -41,6 +44,7 @@ where Entry.ID: Hashable {
         let showSpinner = !silent || !hasLoadedOnce
         if showSpinner { isLoading = true }
         let started = ContinuousClock.now
+        log.debug("load start url=\(self.endpoint.absoluteString, privacy: .public) silent=\(silent, privacy: .public)")
 
         do {
             var request = URLRequest(url: endpoint)
@@ -49,6 +53,7 @@ where Entry.ID: Hashable {
             guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
                 let code = (response as? HTTPURLResponse)?.statusCode ?? -1
                 lastError = "HTTP \(code)"
+                log.warning("load http_error url=\(self.endpoint.absoluteString, privacy: .public) status=\(code, privacy: .public)")
                 if showSpinner {
                     await holdSpinner(since: started)
                     isLoading = false
@@ -66,8 +71,11 @@ where Entry.ID: Hashable {
                 hasLoadedOnce = true
                 lastRefreshedAt = Date()
             }
+            let ms = (ContinuousClock.now - started) / .milliseconds(1)
+            log.debug("load ok url=\(self.endpoint.absoluteString, privacy: .public) entries=\(newCount, privacy: .public) ms=\(ms, privacy: .public)")
         } catch {
             lastError = error.localizedDescription
+            log.error("load decode_or_io_error url=\(self.endpoint.absoluteString, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
         }
 
         if showSpinner {

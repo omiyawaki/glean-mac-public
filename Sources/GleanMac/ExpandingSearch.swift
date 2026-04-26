@@ -1,5 +1,8 @@
 import SwiftUI
 import AppKit
+import os
+
+private let log = Logger(subsystem: "com.miyawaki.glean-mac", category: "search")
 
 /// Toolbar-placed search affordance that mirrors the System Settings
 /// pattern: a circular magnifying-glass button by default, expands
@@ -32,6 +35,7 @@ struct ExpandingSearch: View {
 
     private var collapsed: some View {
         Button {
+            log.debug("search: expand-on-click")
             withAnimation(.smooth(duration: 0.22)) { isExpanded = true }
         } label: {
             Image(systemName: "magnifyingglass")
@@ -67,12 +71,14 @@ struct ExpandingSearch: View {
     }
 
     private func collapse() {
+        log.debug("search: collapse-via-esc")
         query = ""
         withAnimation(.smooth(duration: 0.22)) { isExpanded = false }
     }
 
     private func collapseIfEmpty() {
         if query.isEmpty {
+            log.debug("search: collapse-on-blur-empty")
             withAnimation(.smooth(duration: 0.22)) { isExpanded = false }
         }
     }
