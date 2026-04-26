@@ -76,9 +76,6 @@ struct LibraryDetailView: View {
         }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
-                ExpandingSearch(query: $query, prompt: "Search title or author")
-            }
-            ToolbarItem(placement: .primaryAction) {
                 Button {
                     inspectorPresented.toggle()
                 } label: {
@@ -87,6 +84,10 @@ struct LibraryDetailView: View {
                 .keyboardShortcut("i", modifiers: .command)
                 .help("Show metadata inspector")
                 .disabled(store.record == nil)
+            }
+            ToolbarSpacer()
+            ToolbarItem(placement: .primaryAction) {
+                ExpandingSearch(query: $query, prompt: "Search title or author")
             }
         }
         .task(id: citekey) {
