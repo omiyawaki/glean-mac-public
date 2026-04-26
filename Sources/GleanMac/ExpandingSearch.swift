@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 /// Toolbar-placed search affordance that mirrors the System Settings
 /// pattern: a circular magnifying-glass button by default, expands
@@ -7,12 +8,16 @@ import SwiftUI
 /// this for free, but Apple shipped that as iPhone/iPad only — the
 /// macOS SDK marks it unavailable. So this rebuilds the same behavior
 /// with primitives.
+///
+/// The TextField itself is an NSTextField wrapped via
+/// NSViewRepresentable rather than SwiftUI's TextField, because
+/// @FocusState doesn't bridge reliably through toolbar items —
+/// makeFirstResponder() on AppKit's NSWindow does.
 struct ExpandingSearch: View {
     @Binding var query: String
     var prompt: String = "Search"
 
     @State private var isExpanded = false
-    @FocusState private var isFocused: Bool
 
     var body: some View {
         Group {
@@ -23,21 +28,6 @@ struct ExpandingSearch: View {
             }
         }
         .animation(.smooth(duration: 0.22), value: isExpanded)
-        .task(id: isExpanded) {
-            // Focus must run after the TextField is in the hierarchy —
-            // setting @FocusState from the Button's action handler races
-            // the view teardown. .task(id:) fires on every transition;
-            // a small sleep covers the SwiftUI mount tick.
-            if isExpanded {
-                try? await Task.sleep(for: .milliseconds(50))
-                isFocused = true
-            }
-        }
-        .onChange(of: isFocused) { _, focused in
-            if !focused && query.isEmpty {
-                withAnimation(.smooth(duration: 0.22)) { isExpanded = false }
-            }
-        }
     }
 
     private var collapsed: some View {
@@ -55,18 +45,16 @@ struct ExpandingSearch: View {
             Image(systemName: "magnifyingglass")
                 .foregroundStyle(.secondary)
                 .font(.callout)
-            TextField(prompt, text: $query)
-                .textFieldStyle(.plain)
-                .focused($isFocused)
-                .frame(minWidth: 180, idealWidth: 220, maxWidth: 280)
-                .onExitCommand {
-                    query = ""
-                    isFocused = false
-                }
+            FocusableTextField(
+                text: $query,
+                placeholder: prompt,
+                onCancel: collapse,
+                onBlurIfEmpty: collapseIfEmpty
+            )
+            .frame(minWidth: 180, idealWidth: 220, maxWidth: 280)
             if !query.isEmpty {
                 Button {
                     query = ""
-                    isFocused = true
                 } label: {
                     Image(systemName: "xmark.circle.fill")
                         .foregroundStyle(.secondary)
@@ -76,5 +64,100 @@ struct ExpandingSearch: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 5)
+    }
+
+    private func collapse() {
+        query = ""
+        withAnimation(.smooth(duration: 0.22)) { isExpanded = false }
+    }
+
+    private func collapseIfEmpty() {
+        if query.isEmpty {
+            withAnimation(.smooth(duration: 0.22)) { isExpanded = false }
+        }
+    }
+}
+
+/// NSTextField wrapped for SwiftUI with explicit first-responder
+/// management. Auto-focuses on first appearance and reports blur and
+/// Esc up to the parent.
+struct FocusableTextField: NSViewRepresentable {
+    @Binding var text: String
+    let placeholder: String
+    let onCancel: () -> Void
+    let onBlurIfEmpty: () -> Void
+
+    func makeNSView(context: Context) -> NSTextField {
+        let field = NSTextField()
+        field.placeholderString = placeholder
+        field.isBordered = false
+        field.isBezeled = false
+        field.drawsBackground = false
+        field.focusRingType = .none
+        field.font = .systemFont(ofSize: NSFont.systemFontSize)
+        field.delegate = context.coordinator
+        field.cell?.sendsActionOnEndEditing = false
+        return field
+    }
+
+    func updateNSView(_ nsView: NSTextField, context: Context) {
+        if nsView.stringValue != text {
+            nsView.stringValue = text
+        }
+        if nsView.placeholderString != placeholder {
+            nsView.placeholderString = placeholder
+        }
+        // Ensure the field becomes first responder on first mount —
+        // dispatched async because the view may not yet be in a window.
+        if !context.coordinator.didFocusOnce {
+            context.coordinator.didFocusOnce = true
+            DispatchQueue.main.async {
+                nsView.window?.makeFirstResponder(nsView)
+            }
+        }
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(text: $text, onCancel: onCancel, onBlurIfEmpty: onBlurIfEmpty)
+    }
+
+    final class Coordinator: NSObject, NSTextFieldDelegate {
+        @Binding var text: String
+        let onCancel: () -> Void
+        let onBlurIfEmpty: () -> Void
+        var didFocusOnce = false
+
+        init(text: Binding<String>,
+             onCancel: @escaping () -> Void,
+             onBlurIfEmpty: @escaping () -> Void) {
+            self._text = text
+            self.onCancel = onCancel
+            self.onBlurIfEmpty = onBlurIfEmpty
+        }
+
+        func controlTextDidChange(_ obj: Notification) {
+            if let field = obj.object as? NSTextField {
+                text = field.stringValue
+            }
+        }
+
+        func controlTextDidEndEditing(_ obj: Notification) {
+            // Only collapse if the user blurred to nothing — a Tab to
+            // another field would also trigger this, but the parent
+            // checks the query.isEmpty guard.
+            DispatchQueue.main.async { [weak self] in
+                self?.onBlurIfEmpty()
+            }
+        }
+
+        func control(_ control: NSControl,
+                     textView: NSTextView,
+                     doCommandBy commandSelector: Selector) -> Bool {
+            if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
+                onCancel()
+                return true
+            }
+            return false
+        }
     }
 }
