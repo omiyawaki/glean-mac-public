@@ -79,8 +79,77 @@ struct ContentView: View {
             }
             stream.start()
             eventStream = stream
+
+            #if DEBUG
+            registerIntrospection()
+            #endif
         }
     }
+
+    #if DEBUG
+    private func registerIntrospection() {
+        let r = IntrospectionRegistry.shared
+
+        // Capture bindings so providers read live values on each request.
+        let selectionBinding = $selection
+        let backlogSelectionBinding = $backlogSelection
+        let librarySelectionBinding = $librarySelection
+        let libraryQueryBinding = $libraryQuery
+        let inspectorBinding = $inspectorPresented
+
+        // Capture stores by reference (each is @Observable).
+        let backlog = backlogStore
+        let review = reviewStore
+        let author = authorStore
+        let library = libraryStore
+
+        r.registerState(key: "sidebarSelection") {
+            selectionBinding.wrappedValue?.rawValue ?? "<none>"
+        }
+        r.registerState(key: "backlogSelection") {
+            backlogSelectionBinding.wrappedValue ?? "<none>"
+        }
+        r.registerState(key: "librarySelection") {
+            librarySelectionBinding.wrappedValue ?? "<none>"
+        }
+        r.registerState(key: "libraryQuery") { libraryQueryBinding.wrappedValue }
+        r.registerState(key: "inspectorPresented") { inspectorBinding.wrappedValue }
+
+        r.registerState(key: "backlog.count") { backlog.count }
+        r.registerState(key: "backlog.entries") { backlog.entries.count }
+        r.registerState(key: "backlog.isLoading") { backlog.isLoading }
+        r.registerState(key: "review.count") { review.count }
+        r.registerState(key: "author.count") { author.count }
+        r.registerState(key: "library.count") { library.count }
+        r.registerState(key: "library.entries") { library.entries.count }
+        r.registerState(key: "library.isLoading") { library.isLoading }
+
+        r.registerAction(id: "select.libraryAll") { @MainActor in
+            selectionBinding.wrappedValue = .libraryAll
+        }
+        r.registerAction(id: "select.backlog") { @MainActor in
+            selectionBinding.wrappedValue = .backlog
+        }
+        r.registerAction(id: "select.maybeReview") { @MainActor in
+            selectionBinding.wrappedValue = .maybeReview
+        }
+        r.registerAction(id: "select.authorProposals") { @MainActor in
+            selectionBinding.wrappedValue = .authorProposals
+        }
+        r.registerAction(id: "inspector.toggle") { @MainActor in
+            inspectorBinding.wrappedValue.toggle()
+        }
+        r.registerAction(id: "inspector.show") { @MainActor in
+            inspectorBinding.wrappedValue = true
+        }
+        r.registerAction(id: "inspector.hide") { @MainActor in
+            inspectorBinding.wrappedValue = false
+        }
+        r.registerAction(id: "library.clearQuery") { @MainActor in
+            libraryQueryBinding.wrappedValue = ""
+        }
+    }
+    #endif
 
     @ViewBuilder
     private var sidebar: some View {
