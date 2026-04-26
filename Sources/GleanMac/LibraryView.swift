@@ -5,6 +5,8 @@ struct LibraryView: View {
     @Binding var selection: String?
     @Binding var query: String
     @State private var now = Date()
+    @State private var grouped: [YearGroup] = []
+    @State private var visibleCount: Int = 0
 
     private let ticker = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
 
@@ -33,6 +35,7 @@ struct LibraryView: View {
                         }
                     }
                 }
+                .animation(nil, value: grouped)
             }
         }
         .navigationTitle("All Papers")
@@ -47,32 +50,42 @@ struct LibraryView: View {
         .task {
             if !store.hasLoadedOnce { await store.load() }
         }
+        .task(id: query) {
+            recomputeGroups()
+        }
+        .task(id: store.entries.count) {
+            recomputeGroups()
+        }
         .onReceive(ticker) { now = $0 }
     }
 
-    private var filtered: [LibraryEntry] {
+    /// Recompute filter + year grouping into @State so the List sees a
+    /// stable value across body re-evaluations. Without this, the
+    /// grouped result was rebuilt on every render — including the
+    /// per-character renders triggered by the search field bindings —
+    /// and clearing a non-empty filter caused a beach-ball as SwiftUI
+    /// tried to redraw 5000+ rows in a single frame.
+    private func recomputeGroups() {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !q.isEmpty else { return store.entries }
-        return store.entries.filter { entry in
-            if entry.title.lowercased().contains(q) { return true }
-            return entry.authors.contains { author in
-                author.family.lowercased().contains(q)
-                    || author.given.lowercased().contains(q)
+        let entries: [LibraryEntry]
+        if q.isEmpty {
+            entries = store.entries
+        } else {
+            entries = store.entries.filter { entry in
+                if entry.title.lowercased().contains(q) { return true }
+                return entry.authors.contains { author in
+                    author.family.lowercased().contains(q)
+                        || author.given.lowercased().contains(q)
+                }
             }
         }
-    }
 
-    private struct YearGroup {
-        let year: Int?
-        let entries: [LibraryEntry]
-    }
-
-    private var grouped: [YearGroup] {
         var byYear: [Int?: [LibraryEntry]] = [:]
-        for e in filtered {
+        byYear.reserveCapacity(120)
+        for e in entries {
             byYear[e.year, default: []].append(e)
         }
-        return byYear.keys.sorted { (a, b) in
+        let newGrouped = byYear.keys.sorted { (a, b) in
             switch (a, b) {
             case (nil, _): return false
             case (_, nil): return true
@@ -80,12 +93,20 @@ struct LibraryView: View {
             default: return false
             }
         }.map { YearGroup(year: $0, entries: byYear[$0] ?? []) }
+
+        visibleCount = entries.count
+        grouped = newGrouped
+    }
+
+    fileprivate struct YearGroup: Equatable {
+        let year: Int?
+        let entries: [LibraryEntry]
     }
 
     private var subtitle: String {
         guard store.hasLoadedOnce else { return "" }
         let total = store.count
-        let visible = filtered.count
+        let visible = visibleCount
         let countPart: String
         if visible == total {
             countPart = total == 1 ? "1 paper" : "\(total) papers"
