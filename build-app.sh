@@ -1,13 +1,13 @@
 #!/bin/bash
 # Build glean-mac and wrap the SPM binary in a proper .app bundle.
-# Output: ./glean.app — double-click or `open glean.app` to run.
+# Output: ~/Applications/glean.app — double-click or `open ~/Applications/glean.app` to run.
 set -e
 
 REPO="$(cd "$(dirname "$0")" && pwd)"
 cd "$REPO"
 
 CONFIG="${CONFIG:-debug}"
-APP="$REPO/glean.app"
+APP="$HOME/Applications/glean.app"
 BIN="$REPO/.build/arm64-apple-macosx/$CONFIG/GleanMac"
 
 echo "Building (configuration: $CONFIG)…"
@@ -18,6 +18,7 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/GleanMac"
 cp "$REPO/Resources/Info.plist" "$APP/Contents/Info.plist"
+cp "$REPO/Resources/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 # ad-hoc sign so launchd / TCC don't reject the unsigned binary
 codesign --force --sign - "$APP" >/dev/null 2>&1 || true
 
