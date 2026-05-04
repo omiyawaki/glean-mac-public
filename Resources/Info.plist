@@ -3,9 +3,9 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleName</key>
-    <string>glean</string>
+    <string>Glean</string>
     <key>CFBundleDisplayName</key>
-    <string>glean</string>
+    <string>Glean</string>
     <key>CFBundleExecutable</key>
     <string>GleanMac</string>
     <key>CFBundleIdentifier</key>

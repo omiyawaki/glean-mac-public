@@ -179,7 +179,7 @@ struct ContentView: View {
                     .tag(SidebarItem.authorProposals)
             }
         }
-        .navigationTitle("glean")
+        .navigationTitle("Glean")
     }
 
     @ViewBuilder
