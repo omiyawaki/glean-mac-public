@@ -13,9 +13,34 @@ enum IntakeActions {
 
         var errorDescription: String? {
             switch self {
-            case .http(let code, _): "Server returned HTTP \(code)"
-            case .server(let message): message
+            case .http(let code, let detail):
+                if let message = Self.serverMessage(from: detail) {
+                    return "Server returned HTTP \(code): \(message)"
+                }
+                return "Server returned HTTP \(code)"
+            case .server(let message):
+                return message
             }
+        }
+
+        private static func serverMessage(from detail: String) -> String? {
+            let trimmed = detail.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return nil }
+            if let data = trimmed.data(using: .utf8),
+               let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                return message(from: payload)
+            }
+            return trimmed
+        }
+
+        static func message(from payload: [String: Any]) -> String? {
+            for key in ["detail", "error"] {
+                if let value = payload[key] as? String {
+                    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !trimmed.isEmpty { return trimmed }
+                }
+            }
+            return nil
         }
     }
 
@@ -68,10 +93,9 @@ enum IntakeActions {
         }
         if let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
            let ok = payload["ok"] as? Bool, !ok {
-            let detail = (payload["error"] as? String)
-                ?? (payload["detail"] as? String)
-                ?? "Upload failed"
-            throw ActionError.server(detail)
+            throw ActionError.server(
+                ActionError.message(from: payload) ?? "Upload failed"
+            )
         }
     }
 
@@ -93,10 +117,9 @@ enum IntakeActions {
         }
         if let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
            let ok = payload["ok"] as? Bool, !ok {
-            let detail = (payload["error"] as? String)
-                ?? (payload["detail"] as? String)
-                ?? "Action failed"
-            throw ActionError.server(detail)
+            throw ActionError.server(
+                ActionError.message(from: payload) ?? "Action failed"
+            )
         }
     }
 

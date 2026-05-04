@@ -141,6 +141,36 @@ final class IntakeStoreTests: XCTestCase {
         XCTAssertFalse(store.isLoading)
     }
 
+    @MainActor
+    func testOptimisticRemoveFiltersReloadUntilReleased() async {
+        MockURLProtocol.requestHandler = { request in
+            let body = """
+            {"count":2,"entries":[
+              {"added_at":"2026-04-25T08:00:00Z","citekey":"a","doi":"10/a",
+               "last_attempt_at":null,"title":"a","tried":[]},
+              {"added_at":"2026-04-25T08:00:00Z","citekey":"b","doi":"10/b",
+               "last_attempt_at":null,"title":"b","tried":[]}
+            ]}
+            """
+            return Self.ok(request: request, body: body)
+        }
+        let store = makeBacklogStore()
+        await store.load()
+
+        store.optimisticallyRemove(id: "10/a")
+        XCTAssertEqual(store.entries.map(\.doi), ["10/b"])
+        XCTAssertEqual(store.count, 1)
+
+        await store.load(silent: true)
+        XCTAssertEqual(store.entries.map(\.doi), ["10/b"])
+        XCTAssertEqual(store.count, 1)
+
+        store.releaseOptimisticRemoval(id: "10/a")
+        await store.load(silent: true)
+        XCTAssertEqual(store.entries.map(\.doi), ["10/a", "10/b"])
+        XCTAssertEqual(store.count, 2)
+    }
+
     // MARK: - factory
 
     @MainActor

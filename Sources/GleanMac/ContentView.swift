@@ -39,7 +39,7 @@ struct ContentView: View {
     @State private var authorStore = Stores.author()
     @State private var libraryStore = Stores.library()
     @State private var libraryDetailStore = LibraryDetailStore()
-    @State private var uploadStore = UploadStore()
+    @State private var actionQueue = ActionQueueStore()
     @State private var eventStream: EventStream?
 
     private static let eventsURL = URL(
@@ -57,6 +57,11 @@ struct ContentView: View {
         .inspector(isPresented: $inspectorPresented) {
             inspector
                 .inspectorColumnWidth(min: 280, ideal: 340, max: 480)
+        }
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                ActionQueueButton(queue: actionQueue)
+            }
         }
         .task {
             guard eventStream == nil else { return }
@@ -102,6 +107,7 @@ struct ContentView: View {
         let review = reviewStore
         let author = authorStore
         let library = libraryStore
+        let actions = actionQueue
 
         r.registerState(key: "sidebarSelection") {
             selectionBinding.wrappedValue?.rawValue ?? "<none>"
@@ -123,6 +129,8 @@ struct ContentView: View {
         r.registerState(key: "library.count") { library.count }
         r.registerState(key: "library.entries") { library.entries.count }
         r.registerState(key: "library.isLoading") { library.isLoading }
+        r.registerState(key: "actions.active") { actions.activeCount }
+        r.registerState(key: "actions.failed") { actions.failedCount }
 
         r.registerAction(id: "select.libraryAll") { @MainActor in
             selectionBinding.wrappedValue = .libraryAll
@@ -183,12 +191,14 @@ struct ContentView: View {
                         query: $libraryQuery)
         case .backlog:
             BacklogView(store: backlogStore,
-                        uploads: uploadStore,
+                        actionQueue: actionQueue,
                         selection: $backlogSelection)
         case .maybeReview:
-            MaybeReviewView(store: reviewStore)
+            MaybeReviewView(store: reviewStore,
+                            actionQueue: actionQueue)
         case .authorProposals:
-            AuthorProposalsView(store: authorStore)
+            AuthorProposalsView(store: authorStore,
+                                actionQueue: actionQueue)
         case .none:
             ContentUnavailableView(
                 "Select a section",

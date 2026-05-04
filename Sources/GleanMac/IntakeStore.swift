@@ -26,6 +26,7 @@ where Entry.ID: Hashable {
     private let extract: (Response) -> (Int, [Entry])
     private let timeoutInterval: TimeInterval
     private let minSpinnerDuration: Duration
+    private var optimisticallyRemovedIDs: Set<Entry.ID> = []
 
     init(endpoint: URL,
          timeoutInterval: TimeInterval = 8,
@@ -64,9 +65,13 @@ where Entry.ID: Hashable {
             decoder.dateDecodingStrategy = .iso8601
             let payload = try decoder.decode(Response.self, from: data)
             let (newCount, newEntries) = extract(payload)
+            let filteredEntries = newEntries.filter {
+                !optimisticallyRemovedIDs.contains($0.id)
+            }
+            let hiddenCount = newEntries.count - filteredEntries.count
             withAnimation(.smooth) {
-                entries = newEntries
-                count = newCount
+                entries = filteredEntries
+                count = max(0, newCount - hiddenCount)
                 lastError = nil
                 hasLoadedOnce = true
                 lastRefreshedAt = Date()
@@ -82,6 +87,20 @@ where Entry.ID: Hashable {
             await holdSpinner(since: started)
             isLoading = false
         }
+    }
+
+    func optimisticallyRemove(id: Entry.ID) {
+        optimisticallyRemovedIDs.insert(id)
+        guard entries.contains(where: { $0.id == id }) else { return }
+        withAnimation(.smooth) {
+            entries.removeAll { $0.id == id }
+            count = max(0, count - 1)
+            lastRefreshedAt = Date()
+        }
+    }
+
+    func releaseOptimisticRemoval(id: Entry.ID) {
+        optimisticallyRemovedIDs.remove(id)
     }
 
     private func holdSpinner(since started: ContinuousClock.Instant) async {

@@ -2,11 +2,9 @@ import SwiftUI
 
 struct BacklogView: View {
     let store: BacklogStore
-    let uploads: UploadStore
+    let actionQueue: ActionQueueStore
     @Binding var selection: String?
     @State private var now = Date()
-    @State private var actionError: String?
-    @State private var showError = false
 
     private let ticker = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
 
@@ -27,13 +25,6 @@ struct BacklogView: View {
                 }
             } else {
                 List(selection: $selection) {
-                    if !uploads.entries.isEmpty {
-                        Section("Uploading") {
-                            ForEach(uploads.entries) { upload in
-                                UploadingRow(filename: upload.filename)
-                            }
-                        }
-                    }
                     Section {
                         ForEach(store.entries) { entry in
                             BacklogRow(entry: entry).tag(entry.id)
@@ -58,23 +49,15 @@ struct BacklogView: View {
         .dropDestination(for: URL.self) { urls, _ in
             let pdfs = urls.filter { $0.pathExtension.lowercased() == "pdf" }
             for url in pdfs {
-                Task {
-                    do {
-                        try await uploads.upload(url)
-                    } catch {
-                        actionError = error.localizedDescription
-                        showError = true
-                    }
+                actionQueue.enqueue(
+                    title: "Attach PDF",
+                    detail: url.lastPathComponent,
+                    systemImage: "doc.richtext"
+                ) {
+                    try await IntakeActions.attach(file: url)
                 }
             }
             return !pdfs.isEmpty
-        }
-        .alert("Upload failed",
-               isPresented: $showError,
-               presenting: actionError) { _ in
-            Button("OK", role: .cancel) { }
-        } message: { message in
-            Text(message)
         }
     }
 
@@ -104,21 +87,6 @@ private struct BacklogRow: View {
                     .font(.subheadline)
                     .foregroundStyle(.tertiary)
             }
-        }
-        .padding(.vertical, 2)
-    }
-}
-
-private struct UploadingRow: View {
-    let filename: String
-
-    var body: some View {
-        HStack(spacing: 10) {
-            ProgressView().controlSize(.small)
-            Text(filename)
-                .font(.subheadline)
-                .lineLimit(1)
-            Spacer()
         }
         .padding(.vertical, 2)
     }

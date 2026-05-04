@@ -2,10 +2,8 @@ import SwiftUI
 
 struct MaybeReviewView: View {
     let store: ReviewStore
+    let actionQueue: ActionQueueStore
     @State private var now = Date()
-    @State private var inFlight: Set<String> = []
-    @State private var actionError: String?
-    @State private var showError = false
 
     private let ticker = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
 
@@ -34,9 +32,8 @@ struct MaybeReviewView: View {
                 List(store.entries) { entry in
                     ReviewRow(
                         entry: entry,
-                        isBusy: inFlight.contains(entry.doi),
-                        onAdd: { await perform(.add, entry: entry) },
-                        onSkip: { await perform(.skip, entry: entry) }
+                        onAdd: { perform(.add, entry: entry) },
+                        onSkip: { perform(.skip, entry: entry) }
                     )
                 }
             }
@@ -54,31 +51,47 @@ struct MaybeReviewView: View {
             if !store.hasLoadedOnce { await store.load() }
         }
         .onReceive(ticker) { now = $0 }
-        .alert("Action failed",
-               isPresented: $showError,
-               presenting: actionError) { _ in
-            Button("OK", role: .cancel) { }
-        } message: { message in
-            Text(message)
+    }
+
+    private enum Kind {
+        case add, skip
+
+        var title: String {
+            switch self {
+            case .add: "Add paper"
+            case .skip: "Skip paper"
+            }
+        }
+
+        var systemImage: String {
+            switch self {
+            case .add: "plus.circle"
+            case .skip: "archivebox"
+            }
         }
     }
 
-    private enum Kind { case add, skip }
-
-    private func perform(_ kind: Kind, entry: ReviewEntry) async {
-        inFlight.insert(entry.doi)
-        defer { inFlight.remove(entry.doi) }
-        do {
-            switch kind {
-            case .add: try await IntakeActions.reviewAdd(doi: entry.doi)
-            case .skip: try await IntakeActions.reviewSkip(doi: entry.doi)
+    @MainActor
+    private func perform(_ kind: Kind, entry: ReviewEntry) {
+        let id = entry.id
+        store.optimisticallyRemove(id: id)
+        actionQueue.enqueue(
+            title: kind.title,
+            detail: entry.title,
+            systemImage: kind.systemImage
+        ) {
+            store.optimisticallyRemove(id: id)
+            do {
+                switch kind {
+                case .add: try await IntakeActions.reviewAdd(doi: entry.doi)
+                case .skip: try await IntakeActions.reviewSkip(doi: entry.doi)
+                }
+                store.releaseOptimisticRemoval(id: id)
+            } catch {
+                store.releaseOptimisticRemoval(id: id)
+                await store.load(silent: true)
+                throw error
             }
-            // On success: do nothing locally — the SSE event will fire when
-            // the server rewrites review_queue.md, and the store will
-            // silently refetch with the row removed.
-        } catch {
-            actionError = error.localizedDescription
-            showError = true
         }
     }
 
@@ -94,9 +107,8 @@ struct MaybeReviewView: View {
 
 private struct ReviewRow: View {
     let entry: ReviewEntry
-    let isBusy: Bool
-    let onAdd: () async -> Void
-    let onSkip: () async -> Void
+    let onAdd: () -> Void
+    let onSkip: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -126,24 +138,18 @@ private struct ReviewRow: View {
                 }
                 Spacer()
                 Button {
-                    Task { await onSkip() }
+                    onSkip()
                 } label: {
                     Text("Skip")
                 }
                 .buttonStyle(.glass)
-                .disabled(isBusy)
 
                 Button {
-                    Task { await onAdd() }
+                    onAdd()
                 } label: {
-                    if isBusy {
-                        ProgressView().controlSize(.small)
-                    } else {
-                        Text("Add")
-                    }
+                    Text("Add")
                 }
                 .buttonStyle(.glassProminent)
-                .disabled(isBusy)
             }
         }
         .padding(.vertical, 4)

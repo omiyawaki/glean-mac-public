@@ -2,10 +2,8 @@ import SwiftUI
 
 struct AuthorProposalsView: View {
     let store: AuthorStore
+    let actionQueue: ActionQueueStore
     @State private var now = Date()
-    @State private var inFlight: Set<String> = []
-    @State private var actionError: String?
-    @State private var showError = false
 
     private let ticker = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
 
@@ -34,9 +32,8 @@ struct AuthorProposalsView: View {
                 List(store.entries) { proposal in
                     AuthorRow(
                         proposal: proposal,
-                        isBusy: inFlight.contains(proposal.author),
-                        onFollow: { await perform(.follow, proposal: proposal) },
-                        onDismiss: { await perform(.dismiss, proposal: proposal) }
+                        onFollow: { perform(.follow, proposal: proposal) },
+                        onDismiss: { perform(.dismiss, proposal: proposal) }
                     )
                 }
             }
@@ -54,28 +51,47 @@ struct AuthorProposalsView: View {
             if !store.hasLoadedOnce { await store.load() }
         }
         .onReceive(ticker) { now = $0 }
-        .alert("Action failed",
-               isPresented: $showError,
-               presenting: actionError) { _ in
-            Button("OK", role: .cancel) { }
-        } message: { message in
-            Text(message)
+    }
+
+    private enum Kind {
+        case follow, dismiss
+
+        var title: String {
+            switch self {
+            case .follow: "Follow author"
+            case .dismiss: "Dismiss author"
+            }
+        }
+
+        var systemImage: String {
+            switch self {
+            case .follow: "person.crop.circle.badge.plus"
+            case .dismiss: "archivebox"
+            }
         }
     }
 
-    private enum Kind { case follow, dismiss }
-
-    private func perform(_ kind: Kind, proposal: AuthorProposal) async {
-        inFlight.insert(proposal.author)
-        defer { inFlight.remove(proposal.author) }
-        do {
-            switch kind {
-            case .follow: try await IntakeActions.authorFollow(author: proposal.author)
-            case .dismiss: try await IntakeActions.authorDismiss(author: proposal.author)
+    @MainActor
+    private func perform(_ kind: Kind, proposal: AuthorProposal) {
+        let id = proposal.id
+        store.optimisticallyRemove(id: id)
+        actionQueue.enqueue(
+            title: kind.title,
+            detail: proposal.author,
+            systemImage: kind.systemImage
+        ) {
+            store.optimisticallyRemove(id: id)
+            do {
+                switch kind {
+                case .follow: try await IntakeActions.authorFollow(author: proposal.author)
+                case .dismiss: try await IntakeActions.authorDismiss(author: proposal.author)
+                }
+                store.releaseOptimisticRemoval(id: id)
+            } catch {
+                store.releaseOptimisticRemoval(id: id)
+                await store.load(silent: true)
+                throw error
             }
-        } catch {
-            actionError = error.localizedDescription
-            showError = true
         }
     }
 
@@ -91,9 +107,8 @@ struct AuthorProposalsView: View {
 
 private struct AuthorRow: View {
     let proposal: AuthorProposal
-    let isBusy: Bool
-    let onFollow: () async -> Void
-    let onDismiss: () async -> Void
+    let onFollow: () -> Void
+    let onDismiss: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -121,24 +136,18 @@ private struct AuthorRow: View {
             HStack(spacing: 8) {
                 Spacer()
                 Button {
-                    Task { await onDismiss() }
+                    onDismiss()
                 } label: {
                     Text("Dismiss")
                 }
                 .buttonStyle(.glass)
-                .disabled(isBusy)
 
                 Button {
-                    Task { await onFollow() }
+                    onFollow()
                 } label: {
-                    if isBusy {
-                        ProgressView().controlSize(.small)
-                    } else {
-                        Text("Follow")
-                    }
+                    Text("Follow")
                 }
                 .buttonStyle(.glassProminent)
-                .disabled(isBusy)
             }
         }
         .padding(.vertical, 4)
