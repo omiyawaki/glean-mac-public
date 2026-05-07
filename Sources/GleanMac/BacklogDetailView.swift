@@ -3,12 +3,26 @@ import AppKit
 
 struct BacklogDetailView: View {
     let entry: BacklogEntry?
+    let actionQueue: ActionQueueStore
     @Binding var inspectorPresented: Bool
+    @State private var actionError: String?
+    @State private var showError = false
 
     var body: some View {
         Group {
             if let entry, let url = doiURL(for: entry) {
-                WebViewer(url: url)
+                WebViewer(url: url) { downloadedURL in
+                    actionQueue.enqueue(
+                        title: "Attach PDF",
+                        detail: downloadedURL.lastPathComponent,
+                        systemImage: "doc.richtext"
+                    ) {
+                        try await IntakeActions.attach(file: downloadedURL)
+                    }
+                } onDownloadFailed: { message in
+                    actionError = message
+                    showError = true
+                }
                     .navigationTitle(entry.title)
                     .navigationSubtitle(entry.doi)
             } else if entry != nil {
@@ -48,6 +62,13 @@ struct BacklogDetailView: View {
                 .help("Show metadata inspector")
                 .disabled(entry == nil)
             }
+        }
+        .alert("PDF handling failed",
+               isPresented: $showError,
+               presenting: actionError) { _ in
+            Button("OK", role: .cancel) { }
+        } message: { message in
+            Text(message)
         }
     }
 

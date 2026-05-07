@@ -156,6 +156,16 @@ struct ContentView: View {
         r.registerAction(id: "library.clearQuery") { @MainActor in
             libraryQueryBinding.wrappedValue = ""
         }
+        r.registerAction(id: "library.setQuery") { @MainActor (payload: [String: Any]?) in
+            if let q = payload?["query"] as? String {
+                libraryQueryBinding.wrappedValue = q
+            }
+        }
+        r.registerAction(id: "backlog.selectByID") { @MainActor (payload: [String: Any]?) in
+            if let id = payload?["id"] as? String {
+                backlogSelectionBinding.wrappedValue = id
+            }
+        }
     }
     #endif
 
@@ -220,6 +230,7 @@ struct ContentView: View {
         case .backlog:
             BacklogDetailView(
                 entry: selectedBacklogEntry,
+                actionQueue: actionQueue,
                 inspectorPresented: $inspectorPresented
             )
         case .maybeReview, .authorProposals, .none:

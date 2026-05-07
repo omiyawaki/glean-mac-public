@@ -6,6 +6,21 @@ import os
 
 private let log = Logger(subsystem: "com.miyawaki.glean-mac", category: "introspection")
 
+/// Pull Content-Length out of HTTP/1.1 request headers. Returns 0 when missing
+/// or unparseable, which is the desired behavior for GET requests without a body.
+private func parseContentLength(headerData: Data) -> Int {
+    guard let s = String(data: headerData, encoding: .utf8) else { return 0 }
+    for line in s.components(separatedBy: "\r\n") {
+        guard let colon = line.firstIndex(of: ":") else { continue }
+        let name = line[..<colon].lowercased()
+        if name == "content-length" {
+            let value = line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces)
+            return Int(value) ?? 0
+        }
+    }
+    return 0
+}
+
 /// Localhost-only HTTP server that exposes the introspection registry as JSON.
 /// Started in DEBUG builds from `GleanMacApp`. Endpoints:
 ///
@@ -74,16 +89,23 @@ final class IntrospectionServer {
             }
             var buf = accumulated
             if let data = data { buf.append(data) }
-            // Wait for the blank line that terminates HTTP/1.1 headers.
-            // We don't read request bodies in this server; all actions key off the path.
-            if let _ = buf.range(of: Data([0x0d, 0x0a, 0x0d, 0x0a])) {
-                Task { @MainActor in
-                    let response = await self.respond(rawRequest: buf)
-                    connection.send(content: response, completion: .contentProcessed { _ in
-                        connection.cancel()
-                    })
+            if let headerEnd = buf.range(of: Data([0x0d, 0x0a, 0x0d, 0x0a])) {
+                let headerData = buf.subdata(in: 0..<headerEnd.lowerBound)
+                let bodyStart = headerEnd.upperBound
+                let contentLength = parseContentLength(headerData: headerData)
+                let bodyAvailable = buf.count - bodyStart
+                if bodyAvailable >= contentLength {
+                    let bodyData = contentLength > 0
+                        ? buf.subdata(in: bodyStart..<(bodyStart + contentLength))
+                        : Data()
+                    Task { @MainActor in
+                        let response = await self.respond(headerData: headerData, bodyData: bodyData)
+                        connection.send(content: response, completion: .contentProcessed { _ in
+                            connection.cancel()
+                        })
+                    }
+                    return
                 }
-                return
             }
             if isComplete {
                 connection.cancel(); return
@@ -93,8 +115,8 @@ final class IntrospectionServer {
         }
     }
 
-    private func respond(rawRequest: Data) async -> Data {
-        guard let request = String(data: rawRequest, encoding: .utf8),
+    private func respond(headerData: Data, bodyData: Data) async -> Data {
+        guard let request = String(data: headerData, encoding: .utf8),
               let firstLine = request.split(separator: "\r\n").first else {
             return httpResponse(status: 400, body: jsonData(["error": "bad request"]))
         }
@@ -104,12 +126,18 @@ final class IntrospectionServer {
         }
         let method = parts[0]
         let path = parts[1]
-        return await route(method: method, path: path)
+
+        var payload: [String: Any]? = nil
+        if !bodyData.isEmpty,
+           let json = try? JSONSerialization.jsonObject(with: bodyData) as? [String: Any] {
+            payload = json
+        }
+        return await route(method: method, path: path, payload: payload)
     }
 
     // MARK: - Routing
 
-    private func route(method: String, path: String) async -> Data {
+    private func route(method: String, path: String, payload: [String: Any]?) async -> Data {
         let registry = IntrospectionRegistry.shared
         switch (method, path) {
         case ("GET", "/"):
@@ -131,7 +159,7 @@ final class IntrospectionServer {
 
         case ("POST", let p) where p.hasPrefix("/action/"):
             let id = String(p.dropFirst("/action/".count))
-            let ran = await registry.runAction(id: id)
+            let ran = await registry.runAction(id: id, payload: payload)
             let status = ran ? 200 : 404
             let body: [String: AnyEncodable] = [
                 "ok": AnyEncodable(ran),

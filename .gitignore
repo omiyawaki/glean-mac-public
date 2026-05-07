@@ -3,5 +3,6 @@
 Package.resolved
 *.xcodeproj
 DerivedData/
+dist/
 .DS_Store
 glean.app/

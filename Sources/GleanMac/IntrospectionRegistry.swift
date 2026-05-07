@@ -39,7 +39,7 @@ final class IntrospectionRegistry {
 
     private var elements: [String: () -> ElementSnapshot] = [:]
     private var stateProviders: [String: () -> any Encodable] = [:]
-    private var actions: [String: () async -> Void] = [:]
+    private var actions: [String: @MainActor ([String: Any]?) async -> Void] = [:]
 
     /// Currently focused element id. Views set this in their `.onChange(of:)`
     /// handler tied to `@FocusState`.
@@ -79,7 +79,11 @@ final class IntrospectionRegistry {
 
     // MARK: - Actions
 
-    func registerAction(id: String, _ action: @escaping () async -> Void) {
+    func registerAction(id: String, _ action: @escaping @MainActor () async -> Void) {
+        actions[id] = { _ in await action() }
+    }
+
+    func registerAction(id: String, _ action: @escaping @MainActor ([String: Any]?) async -> Void) {
         actions[id] = action
     }
 
@@ -87,9 +91,9 @@ final class IntrospectionRegistry {
         actions.removeValue(forKey: id)
     }
 
-    func runAction(id: String) async -> Bool {
+    func runAction(id: String, payload: [String: Any]? = nil) async -> Bool {
         guard let action = actions[id] else { return false }
-        await action()
+        await action(payload)
         return true
     }
 

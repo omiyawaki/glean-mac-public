@@ -84,6 +84,47 @@ struct ExpandingSearch: View {
     }
 }
 
+#if DEBUG
+/// NSTextField that pushes first-responder transitions into the
+/// introspection registry. The HTTP /focus endpoint reads this. Lets a
+/// closed-loop test assert "after the expand action, the search field
+/// has focus" without polling pixels — catches the focus-binding race
+/// where the field appears expanded but never actually takes the cursor.
+final class IntrospectableNSTextField: NSTextField {
+    let introspectionId: String
+
+    init(introspectionId: String) {
+        self.introspectionId = introspectionId
+        super.init(frame: .zero)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    override func becomeFirstResponder() -> Bool {
+        let did = super.becomeFirstResponder()
+        if did {
+            MainActor.assumeIsolated {
+                IntrospectionRegistry.shared.focusedId = introspectionId
+            }
+        }
+        return did
+    }
+
+    override func resignFirstResponder() -> Bool {
+        let did = super.resignFirstResponder()
+        if did {
+            MainActor.assumeIsolated {
+                if IntrospectionRegistry.shared.focusedId == introspectionId {
+                    IntrospectionRegistry.shared.focusedId = nil
+                }
+            }
+        }
+        return did
+    }
+}
+#endif
+
 /// NSTextField wrapped for SwiftUI with explicit first-responder
 /// management. Auto-focuses on first appearance and reports blur and
 /// Esc up to the parent.
@@ -94,7 +135,11 @@ struct FocusableTextField: NSViewRepresentable {
     let onBlurIfEmpty: () -> Void
 
     func makeNSView(context: Context) -> NSTextField {
+        #if DEBUG
+        let field = IntrospectableNSTextField(introspectionId: "search.field")
+        #else
         let field = NSTextField()
+        #endif
         field.placeholderString = placeholder
         field.isBordered = false
         field.isBezeled = false
@@ -147,7 +192,26 @@ struct FocusableTextField: NSViewRepresentable {
             }
         }
 
+        func controlTextDidBeginEditing(_ obj: Notification) {
+            #if DEBUG
+            // AppKit equivalent of @FocusState's .onChange(of: isFocused). Fires
+            // when the field editor takes over the field (i.e. the field is the
+            // active text input). Asserts we're on main, since NSControl
+            // notifications are delivered on the main thread.
+            MainActor.assumeIsolated {
+                IntrospectionRegistry.shared.focusedId = "search.field"
+            }
+            #endif
+        }
+
         func controlTextDidEndEditing(_ obj: Notification) {
+            #if DEBUG
+            MainActor.assumeIsolated {
+                if IntrospectionRegistry.shared.focusedId == "search.field" {
+                    IntrospectionRegistry.shared.focusedId = nil
+                }
+            }
+            #endif
             // Only collapse if the user blurred to nothing — a Tab to
             // another field would also trigger this, but the parent
             // checks the query.isEmpty guard.
