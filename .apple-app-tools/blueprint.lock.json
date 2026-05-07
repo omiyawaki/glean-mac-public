@@ -1,0 +1,76 @@
+{
+  "app" : {
+    "bundlePath" : "~\/Applications\/Glean.app",
+    "id" : "glean-mac",
+    "name" : "Glean",
+    "platform" : "macOS"
+  },
+  "build" : {
+    "configuration" : "debug",
+    "deployCommand" : ".\/build-app.sh",
+    "executable" : "GleanMac",
+    "projectRoot" : "\/Users\/miyawaki\/tools\/glean-mac",
+    "swiftPackagePath" : "."
+  },
+  "components" : [
+    {
+      "id" : "icon-composer-build"
+    },
+    {
+      "id" : "mac-app-packager"
+    },
+    {
+      "id" : "local-update-ui"
+    },
+    {
+      "id" : "macos-design-system"
+    }
+  ],
+  "customCode" : {
+    "allow" : [
+      "Sources\/GleanMac",
+      "Resources",
+      "scripts"
+    ]
+  },
+  "fingerprint" : {
+    "exclude" : [
+      ".build",
+      ".apple-app-tools",
+      "APPLE_APP_MAP.md"
+    ],
+    "include" : [
+      "Package.swift",
+      "Sources",
+      "Resources\/Info.plist",
+      "Resources\/AppIcon.icon",
+      "scripts\/generate-icons.sh",
+      "build-app.sh"
+    ]
+  },
+  "localModules" : [
+    {
+      "name" : "Glean workflow UI",
+      "paths" : [
+        "Sources\/GleanMac"
+      ]
+    },
+    {
+      "name" : "Glean app resources",
+      "paths" : [
+        "Resources"
+      ]
+    }
+  ],
+  "packageDependencies" : [
+    {
+      "name" : "apple-app-tools",
+      "path" : "\/Users\/miyawaki\/tools\/apple-app-tools",
+      "products" : [
+        "AppleAppDesignSystem",
+        "LocalAppUpdateKit"
+      ]
+    }
+  ],
+  "schemaVersion" : 1
+}

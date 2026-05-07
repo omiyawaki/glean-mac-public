@@ -1,0 +1,47 @@
+schemaVersion: 1
+app:
+  id: glean-mac
+  name: Glean
+  platform: macOS
+  bundlePath: ~/Applications/Glean.app
+build:
+  projectRoot: /Users/USERNAME/tools/glean-mac
+  swiftPackagePath: .
+  executable: GleanMac
+  configuration: debug
+  deployCommand: ./build-app.sh
+packageDependencies:
+  - name: apple-app-tools
+    path: /Users/USERNAME/tools/apple-app-tools
+    products:
+      - AppleAppDesignSystem
+      - LocalAppUpdateKit
+components:
+  - id: icon-composer-build
+  - id: mac-app-packager
+  - id: local-update-ui
+  - id: macos-design-system
+localModules:
+  - name: Glean workflow UI
+    paths:
+      - Sources/GleanMac
+  - name: Glean app resources
+    paths:
+      - Resources
+fingerprint:
+  include:
+    - Package.swift
+    - Sources
+    - Resources/Info.plist
+    - Resources/AppIcon.icon
+    - scripts/generate-icons.sh
+    - build-app.sh
+  exclude:
+    - .build
+    - .apple-app-tools
+    - APPLE_APP_MAP.md
+customCode:
+  allow:
+    - Sources/GleanMac
+    - Resources
+    - scripts

@@ -1,3 +1,5 @@
+import AppleAppDesignSystem
+import LocalAppUpdateKit
 import SwiftUI
 
 enum SidebarItem: String, Hashable, Identifiable, CaseIterable {
@@ -28,6 +30,7 @@ enum SidebarItem: String, Hashable, Identifiable, CaseIterable {
 }
 
 struct ContentView: View {
+    @StateObject private var updateController = LocalAppUpdateController()
     @State private var selection: SidebarItem? = .backlog
     @State private var backlogSelection: String?
     @State private var librarySelection: String?
@@ -59,11 +62,13 @@ struct ContentView: View {
                 .inspectorColumnWidth(min: 280, ideal: 340, max: 480)
         }
         .toolbar {
-            ToolbarItem(placement: .primaryAction) {
+            ToolbarItemGroup(placement: .primaryAction) {
+                LocalAppUpdateToolbarButton(controller: updateController)
                 ActionQueueButton(queue: actionQueue)
             }
         }
         .task {
+            await updateController.checkForUpdates()
             guard eventStream == nil else { return }
             let backlog = backlogStore
             let review = reviewStore
