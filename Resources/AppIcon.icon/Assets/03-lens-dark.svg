@@ -1,0 +1,29 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="rim" x1="312" y1="164" x2="706" y2="620" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#E5FFF8"/>
+      <stop offset="0.44" stop-color="#68B6B4"/>
+      <stop offset="1" stop-color="#113D4A"/>
+    </linearGradient>
+    <radialGradient id="glass" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(476 348) rotate(28) scale(284 250)">
+      <stop stop-color="#DFFCF6" stop-opacity="0.34"/>
+      <stop offset="0.5" stop-color="#73D4CF" stop-opacity="0.18"/>
+      <stop offset="1" stop-color="#0C3944" stop-opacity="0.10"/>
+    </radialGradient>
+    <linearGradient id="handle" x1="664" y1="576" x2="820" y2="774" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#DDF4EE"/>
+      <stop offset="0.44" stop-color="#457D81"/>
+      <stop offset="1" stop-color="#061C27"/>
+    </linearGradient>
+    <filter id="lensShadow" x="22%" y="8%" width="68%" height="78%" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="20" stdDeviation="20" flood-color="#00070A" flood-opacity="0.58"/>
+    </filter>
+  </defs>
+  <g filter="url(#lensShadow)">
+    <path d="M660 582L820 742" stroke="url(#handle)" stroke-width="78" stroke-linecap="round"/>
+    <path d="M660 582L820 742" stroke="#F2FFFA" stroke-opacity="0.18" stroke-width="24" stroke-linecap="round"/>
+    <circle cx="510" cy="384" r="242" fill="url(#glass)" stroke="url(#rim)" stroke-width="28"/>
+    <circle cx="510" cy="384" r="214" stroke="#E8FFF8" stroke-opacity="0.32" stroke-width="8"/>
+    <path d="M348 258C414 202 530 186 613 230" stroke="#F0FFF9" stroke-opacity="0.25" stroke-width="24" stroke-linecap="round"/>
+  </g>
+</svg>

@@ -1,0 +1,22 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="110" y1="82" x2="910" y2="946" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#17556E"/>
+      <stop offset="0.48" stop-color="#0A7675"/>
+      <stop offset="1" stop-color="#08364D"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(486 424) rotate(45) scale(646 566)">
+      <stop stop-color="#E8FFF8" stop-opacity="0.34"/>
+      <stop offset="0.5" stop-color="#94E3D8" stop-opacity="0.12"/>
+      <stop offset="1" stop-color="#0B4D60" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="shelf" x1="96" y1="824" x2="928" y2="624" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#D3E2D6" stop-opacity="0.22"/>
+      <stop offset="0.6" stop-color="#5DBCB6" stop-opacity="0.10"/>
+      <stop offset="1" stop-color="#5DBCB6" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1024" fill="url(#bg)"/>
+  <rect width="1024" height="1024" fill="url(#glow)"/>
+  <path d="M76 790C220 842 356 832 500 778C654 720 786 702 950 584V1024H76V790Z" fill="url(#shelf)"/>
+</svg>

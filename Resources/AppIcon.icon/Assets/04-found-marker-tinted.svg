@@ -1,0 +1,17 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="mark" x1="470" y1="348" x2="560" y2="456" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF"/>
+      <stop offset="0.5" stop-color="#E8EEF0"/>
+      <stop offset="1" stop-color="#99A7AE"/>
+    </linearGradient>
+    <filter id="markGlow" x="39%" y="30%" width="23%" height="23%" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="0" stdDeviation="18" flood-color="#FFFFFF" flood-opacity="0.34"/>
+      <feDropShadow dx="0" dy="8" stdDeviation="8" flood-color="#34454C" flood-opacity="0.26"/>
+    </filter>
+  </defs>
+  <g filter="url(#markGlow)">
+    <rect x="458" y="334" width="106" height="106" rx="24" transform="rotate(45 511 387)" fill="url(#mark)"/>
+    <path d="M490 362L532 406" stroke="#FFFFFF" stroke-opacity="0.42" stroke-width="9" stroke-linecap="round"/>
+  </g>
+</svg>

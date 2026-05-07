@@ -1,0 +1,126 @@
+{
+  "fill" : "system-light",
+  "groups" : [
+    {
+      "blur-material" : null,
+      "layers" : [
+        {
+          "glass" : true,
+          "hidden" : false,
+          "image-name-specializations" : [
+            {
+              "value" : "04-found-marker.svg"
+            },
+            {
+              "appearance" : "dark",
+              "value" : "04-found-marker-dark.svg"
+            },
+            {
+              "appearance" : "tinted",
+              "value" : "04-found-marker-tinted.svg"
+            }
+          ],
+          "name" : "Found Marker",
+          "position" : {
+            "scale" : 1,
+            "translation-in-points" : [
+              0,
+              0
+            ]
+          }
+        },
+        {
+          "glass" : true,
+          "hidden" : false,
+          "image-name-specializations" : [
+            {
+              "value" : "03-lens.svg"
+            },
+            {
+              "appearance" : "dark",
+              "value" : "03-lens-dark.svg"
+            },
+            {
+              "appearance" : "tinted",
+              "value" : "03-lens-tinted.svg"
+            }
+          ],
+          "name" : "Discovery Lens",
+          "position" : {
+            "scale" : 1,
+            "translation-in-points" : [
+              0,
+              0
+            ]
+          }
+        },
+        {
+          "glass" : true,
+          "hidden" : false,
+          "image-name-specializations" : [
+            {
+              "value" : "02-paper-stack.svg"
+            },
+            {
+              "appearance" : "dark",
+              "value" : "02-paper-stack-dark.svg"
+            },
+            {
+              "appearance" : "tinted",
+              "value" : "02-paper-stack-tinted.svg"
+            }
+          ],
+          "name" : "Paper Stack",
+          "position" : {
+            "scale" : 1,
+            "translation-in-points" : [
+              0,
+              0
+            ]
+          }
+        },
+        {
+          "glass" : false,
+          "hidden" : false,
+          "image-name-specializations" : [
+            {
+              "value" : "01-background.svg"
+            },
+            {
+              "appearance" : "dark",
+              "value" : "01-background-dark.svg"
+            },
+            {
+              "appearance" : "tinted",
+              "value" : "01-background-tinted.svg"
+            }
+          ],
+          "name" : "Background",
+          "position" : {
+            "scale" : 1,
+            "translation-in-points" : [
+              0,
+              0
+            ]
+          }
+        }
+      ],
+      "name" : "Glean Icon",
+      "shadow" : {
+        "kind" : "layer-color",
+        "opacity" : 0.36
+      },
+      "specular" : true,
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.1
+      }
+    }
+  ],
+  "supported-platforms" : {
+    "circles" : [
+      "watchOS"
+    ],
+    "squares" : "shared"
+  }
+}
