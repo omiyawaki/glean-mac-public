@@ -77,6 +77,15 @@ struct LibraryDetailView: View {
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button {
+                    ExternalPDFOpener.system.open(openablePDFURL)
+                } label: {
+                    Label("Open PDF", systemImage: "arrow.up.right.square")
+                }
+                .help("Open this PDF in the default PDF viewer")
+                .disabled(openablePDFURL == nil)
+            }
+            ToolbarItem(placement: .primaryAction) {
+                Button {
                     inspectorPresented.toggle()
                 } label: {
                     Label("Inspector", systemImage: "info.circle")
@@ -93,6 +102,16 @@ struct LibraryDetailView: View {
         .task(id: citekey) {
             await store.load(citekey: citekey)
         }
+    }
+
+    private var openablePDFURL: URL? {
+        guard let record = store.record,
+              let url = pdfURL(for: record),
+              FileManager.default.fileExists(atPath: url.path)
+        else {
+            return nil
+        }
+        return url
     }
 
     @ViewBuilder
@@ -122,12 +141,7 @@ struct LibraryDetailView: View {
     }
 
     private func pdfURL(for record: LibraryRecord) -> URL? {
-        let main = record.attachments.first(where: { $0.kind == "main" })
-            ?? record.attachments.first
-        guard let main else { return nil }
-        let libraryRoot = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Documents/glean")
-        return libraryRoot.appendingPathComponent(main.path)
+        LibraryPDFLocator.default.pdfURL(for: record)
     }
 
     private func authorYearLine(_ record: LibraryRecord) -> String {
