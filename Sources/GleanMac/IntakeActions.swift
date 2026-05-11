@@ -6,6 +6,8 @@ import Foundation
 /// next /events tick — no manual reload needed at the call site.
 enum IntakeActions {
     private static let baseURL = URL(string: "http://backend.example.com:8765")!
+    private static let defaultPostTimeout: TimeInterval = 30
+    private static let reviewAddTimeout: TimeInterval = 150
 
     enum ActionError: Error, LocalizedError {
         case http(Int, String)
@@ -45,7 +47,9 @@ enum IntakeActions {
     }
 
     static func reviewAdd(doi: String) async throws {
-        try await post(path: "/api/review/add", form: ["doi": doi])
+        try await post(path: "/api/review/add",
+                       form: ["doi": doi],
+                       timeoutInterval: reviewAddTimeout)
     }
 
     static func reviewSkip(doi: String) async throws {
@@ -99,12 +103,14 @@ enum IntakeActions {
         }
     }
 
-    private static func post(path: String, form: [String: String]) async throws {
+    private static func post(path: String,
+                             form: [String: String],
+                             timeoutInterval: TimeInterval = defaultPostTimeout) async throws {
         var request = URLRequest(url: baseURL.appendingPathComponent(path))
         request.httpMethod = "POST"
         request.setValue("application/x-www-form-urlencoded",
                          forHTTPHeaderField: "Content-Type")
-        request.timeoutInterval = 30
+        request.timeoutInterval = timeoutInterval
         request.httpBody = encode(form: form).data(using: .utf8)
 
         let (data, response) = try await URLSession.shared.data(for: request)
