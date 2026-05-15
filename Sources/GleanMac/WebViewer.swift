@@ -51,7 +51,6 @@ struct WebViewer: NSViewRepresentable {
     final class Coordinator: NSObject, WKNavigationDelegate, WKDownloadDelegate {
         var parent: WebViewer
         private var destinationsByDownload = [ObjectIdentifier: URL]()
-
         init(_ parent: WebViewer) {
             self.parent = parent
         }
