@@ -62,8 +62,15 @@ struct ContentView: View {
                 .inspectorColumnWidth(min: 280, ideal: 340, max: 480)
         }
         .toolbar {
-            ToolbarItemGroup(placement: .primaryAction) {
-                LocalAppUpdateToolbarButton(controller: updateController)
+            // Use the ToolbarContent wrapper (matches the Laps app and the
+            // pattern documented by AppleAppDesignSystem). It applies
+            // .sharedBackgroundVisibility(.hidden) at the ToolbarItem level
+            // so the glass button renders without the default toolbar-item
+            // background frame -- using the bare LocalAppUpdateToolbarButton
+            // inside a ToolbarItemGroup skips that and the button looks
+            // boxed-in next to the other toolbar items.
+            LocalAppUpdateToolbarItem(controller: updateController)
+            ToolbarItem(placement: .primaryAction) {
                 ActionQueueButton(queue: actionQueue)
             }
         }
