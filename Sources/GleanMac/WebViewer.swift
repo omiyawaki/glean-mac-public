@@ -246,6 +246,14 @@ struct WebViewer: NSViewRepresentable {
             return JSON.stringify({ clicked: false, reason: "no PDF candidates" });
           }
           hit.element.scrollIntoView({ block: "center", inline: "center" });
+          // Many publishers (ScienceDirect, IOPscience, …) mark their
+          // "View PDF" anchor target="_blank". WKWebView blocks the
+          // popup by default, so the click looks like it did nothing.
+          // Strip the target attribute first so the navigation happens
+          // in the main frame and our response-download path can fire.
+          if (hit.element.tagName.toLowerCase() === "a") {
+            hit.element.removeAttribute("target");
+          }
           hit.element.click();
           return JSON.stringify({
             clicked: true,
