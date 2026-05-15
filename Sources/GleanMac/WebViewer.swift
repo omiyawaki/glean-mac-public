@@ -30,9 +30,10 @@ struct WebViewer: NSViewRepresentable {
         view.allowsBackForwardNavigationGestures = true
         view.allowsMagnification = true
         view.customUserAgent = Self.safariUserAgent
-        #if DEBUG
+        // Register web.* actions on every build, not just DEBUG. The
+        // Release builds need these too; the DEBUG-only HTTP server
+        // is just one of several possible in-process callers.
         registerIntrospection(for: view)
-        #endif
         return view
     }
 
@@ -131,7 +132,6 @@ struct WebViewer: NSViewRepresentable {
         }
     }
 
-    #if DEBUG
     @MainActor
     private func registerIntrospection(for webView: WKWebView) {
         let registry = IntrospectionRegistry.shared
@@ -265,5 +265,4 @@ struct WebViewer: NSViewRepresentable {
         })()
         """
     }
-    #endif
 }

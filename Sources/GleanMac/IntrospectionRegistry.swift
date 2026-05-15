@@ -1,6 +1,10 @@
-#if DEBUG
-
 import Foundation
+
+// The registry itself is always compiled — in release builds it's still
+// useful for in-process callers (the same action surface the DEBUG HTTP
+// server exposes). Only the HTTP-server façade in IntrospectionServer.swift
+// is gated on DEBUG; that's the part that binds a localhost port and
+// shouldn't ship in release artifacts.
 
 /// Snapshot of a UI element exposed for testing. Populated by views
 /// either via direct calls in `.onAppear` or (later) a view modifier.
@@ -101,5 +105,3 @@ final class IntrospectionRegistry {
         Array(actions.keys).sorted()
     }
 }
-
-#endif

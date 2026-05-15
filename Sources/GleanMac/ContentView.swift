@@ -97,13 +97,10 @@ struct ContentView: View {
             stream.start()
             eventStream = stream
 
-            #if DEBUG
             registerIntrospection()
-            #endif
         }
     }
 
-    #if DEBUG
     private func registerIntrospection() {
         let r = IntrospectionRegistry.shared
 
@@ -179,7 +176,6 @@ struct ContentView: View {
             }
         }
     }
-    #endif
 
     @ViewBuilder
     private var sidebar: some View {
