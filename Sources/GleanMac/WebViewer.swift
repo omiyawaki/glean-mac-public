@@ -47,6 +47,17 @@ struct WebViewer: NSViewRepresentable {
         view.wantsLayer = true
         view.layer?.backgroundColor = NSColor(red: 0.094, green: 0.094,
                                               blue: 0.094, alpha: 1.0).cgColor
+        // Make the WebView's content surface non-opaque so the dark NSView
+        // layer underneath shows through during inter-navigation gaps.
+        // Without this, WebKit paints its default opaque white between the
+        // moment a navigation is cancelled (e.g., the http→https upgrade
+        // in decidePolicyFor) and the moment the replacement load() starts
+        // producing pixels — visible as a 0.5-1s white flash on DOIs that
+        // resolve via http (e.g., 10.1029/2011GL048739 → http://doi.example.org).
+        // `drawsBackground` is SPI but stable across WebKit versions on
+        // macOS; the KVC form avoids needing the WKWebView _drawsBackground
+        // header.
+        view.setValue(false, forKey: "drawsBackground")
         // Register web.* actions on every build, not just DEBUG. The
         // Release builds need these too; the DEBUG-only HTTP server
         // is just one of several possible in-process callers.
