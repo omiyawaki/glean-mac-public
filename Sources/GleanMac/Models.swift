@@ -10,7 +10,17 @@ struct BacklogEntry: Codable, Identifiable, Hashable {
     let lastAttemptAt: Date?
     let tried: [String]
 
-    var id: String { doi }
+    /// SwiftUI's List + ForEach require Identifiable rows to have
+    /// unique IDs; identical IDs cause the list to render N copies of
+    /// the same row's content rather than N distinct rows. Backlog
+    /// entries without a DOI (books, non-DOI items like the Smithsonian
+    /// Meteorological Tables) would otherwise all collide on id="",
+    /// so the sidebar showed e.g. five rows of "Smithsonian
+    /// Meteorological Tables" when it should have showed Chakraborty,
+    /// Chan, Hell, Lam, and List once each. Mirror the
+    /// `pdf_backlog._save` key format so the SwiftUI id matches the
+    /// JSON key for the same entry.
+    var id: String { doi.isEmpty ? "citekey:\(citekey)" : doi }
 
     enum CodingKeys: String, CodingKey {
         case citekey, doi, title, tried
