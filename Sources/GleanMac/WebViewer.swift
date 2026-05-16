@@ -24,6 +24,7 @@ struct WebViewer: NSViewRepresentable {
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .default()  // explicit; the default is persistent
         config.defaultWebpagePreferences.allowsContentJavaScript = true
+        Self.installDarkReader(in: config.userContentController)
 
         let view = WKWebView(frame: .zero, configuration: config)
         view.navigationDelegate = context.coordinator
@@ -35,6 +36,47 @@ struct WebViewer: NSViewRepresentable {
         // is just one of several possible in-process callers.
         registerIntrospection(for: view)
         return view
+    }
+
+    /// Inject Dark Reader as a per-frame user script. The bundled
+    /// `darkreader.js` defines a `DarkReader` global; the bootstrap
+    /// after it calls `DarkReader.enable(...)` with a Noir-ish theme
+    /// (slightly reduced brightness, a touch of sepia to soften the
+    /// black so long PDF-adjacent reading sessions are easier on the
+    /// eyes). Runs at document-end so the DOM is ready, and on every
+    /// frame so publisher iframe-embedded readers also flip.
+    ///
+    /// We can't load Noir directly (closed-source Safari extension,
+    /// only loadable into Safari proper). Dark Reader (MIT) is the
+    /// canonical open-source equivalent and behaves indistinguishably
+    /// on the publisher pages we care about.
+    private static func installDarkReader(in controller: WKUserContentController) {
+        guard let url = Bundle.module.url(forResource: "darkreader", withExtension: "js"),
+              let source = try? String(contentsOf: url, encoding: .utf8)
+        else { return }
+        controller.addUserScript(WKUserScript(
+            source: source,
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: false
+        ))
+        let bootstrap = """
+        (() => {
+          if (typeof DarkReader === 'undefined') return;
+          try {
+            DarkReader.setFetchMethod(window.fetch);
+            DarkReader.enable({
+              brightness: 100,
+              contrast: 90,
+              sepia: 10
+            });
+          } catch (_) {}
+        })();
+        """
+        controller.addUserScript(WKUserScript(
+            source: bootstrap,
+            injectionTime: .atDocumentEnd,
+            forMainFrameOnly: false
+        ))
     }
 
     func makeCoordinator() -> Coordinator {
