@@ -156,9 +156,25 @@ struct WebViewer: NSViewRepresentable {
         ) {
             if navigationAction.shouldPerformDownload {
                 decisionHandler(.download)
-            } else {
-                decisionHandler(.allow)
+                return
             }
+            // Some DOI records resolve through http:// redirects (e.g.
+            // doi.org -> http://doi.example.org/<doi> for older AGU GRL
+            // articles). App Transport Security blocks the http navigation
+            // and WKWebView paints a blank white view with no error
+            // surfaced to the user. Upgrade http -> https before allowing;
+            // every publisher we care about serves https on the same host.
+            if let url = navigationAction.request.url,
+               url.scheme?.lowercased() == "http",
+               var comps = URLComponents(url: url, resolvingAgainstBaseURL: false) {
+                comps.scheme = "https"
+                if let upgraded = comps.url {
+                    decisionHandler(.cancel)
+                    webView.load(URLRequest(url: upgraded))
+                    return
+                }
+            }
+            decisionHandler(.allow)
         }
 
         func webView(
