@@ -41,4 +41,34 @@ swift run --package-path "$TOOLS_REPO" -c release apple-app-tools mac package \
     --plist "$REPO/Resources/Info.plist" \
     "${RESOURCE_ARGS[@]}"
 
+# SwiftPM emits target resource bundles next to the binary in .build/.
+# Bundle.module's accessor expects the bundle alongside the .app — i.e.
+# Glean.app/GleanMac_GleanMac.bundle, not inside Contents/Resources.
+# Copy it explicitly so the app works on machines other than the one
+# that built it.
+SPM_BUNDLE="$REPO/.build/arm64-apple-macosx/$CONFIG/GleanMac_GleanMac.bundle"
+if [[ -d "$SPM_BUNDLE" ]]; then
+    rm -rf "$APP/GleanMac_GleanMac.bundle"
+    cp -R "$SPM_BUNDLE" "$APP/GleanMac_GleanMac.bundle"
+    # Bundle(path:) refuses to load a directory that lacks an Info.plist
+    # on machines other than the build host (probably because SwiftPM's
+    # own discovery cache is what makes the loose-directory form work
+    # locally). Drop a minimal Info.plist so the bundle is valid for
+    # Bundle(path:) on any machine.
+    cat > "$APP/GleanMac_GleanMac.bundle/Info.plist" <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key>
+    <string>com.miyawaki.glean-mac.resources</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundlePackageType</key>
+    <string>BNDL</string>
+</dict>
+</plist>
+PLIST
+fi
+
 echo "Done: ${APP}"
