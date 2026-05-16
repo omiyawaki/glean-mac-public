@@ -31,6 +31,22 @@ struct WebViewer: NSViewRepresentable {
         view.allowsBackForwardNavigationGestures = true
         view.allowsMagnification = true
         view.customUserAgent = Self.safariUserAgent
+        // Suppress the bright-white flash that happens between the moment
+        // WKWebView starts a navigation and the moment Dark Reader's
+        // user script finishes injecting its style block. Two changes
+        // working together:
+        //  - underPageBackgroundColor: paints the WebView's chrome dark
+        //    so the rectangle isn't a white card while WebKit waits for
+        //    the first paint of the new page.
+        //  - .black on the underlying NSView's backing layer covers
+        //    iframe gutters that don't pick up the underPage color.
+        // Combined with the document-start CSS prelude (see
+        // installDarkReader) the page never paints white at all.
+        view.underPageBackgroundColor = NSColor(red: 0.094, green: 0.094,
+                                                 blue: 0.094, alpha: 1.0)
+        view.wantsLayer = true
+        view.layer?.backgroundColor = NSColor(red: 0.094, green: 0.094,
+                                              blue: 0.094, alpha: 1.0).cgColor
         // Register web.* actions on every build, not just DEBUG. The
         // Release builds need these too; the DEBUG-only HTTP server
         // is just one of several possible in-process callers.
@@ -54,11 +70,44 @@ struct WebViewer: NSViewRepresentable {
         guard let url = Bundle.module.url(forResource: "darkreader", withExtension: "js"),
               let source = try? String(contentsOf: url, encoding: .utf8)
         else { return }
+        // Stage 1 — runs before any page CSS/HTML has rendered. Plant a
+        // dark <style> sheet against <html> so the very first paint is
+        // a near-black background instead of the publisher's default
+        // white. Without this the browser briefly shows a bright-white
+        // card before Dark Reader's full theme machinery (which is
+        // larger and slower to apply) kicks in. The prelude is small
+        // and intentionally heavy-handed; Dark Reader overrides it with
+        // its own properly-tuned theme microseconds later.
+        let prelude = """
+        (() => {
+          const css = `
+            html, body, * {
+              background-color: #181818 !important;
+              color: #e0e0e0 !important;
+            }
+            img, video, canvas, svg, iframe { background-color: transparent !important; }
+          `;
+          const style = document.createElement('style');
+          style.id = '__glean_dark_prelude__';
+          style.textContent = css;
+          (document.documentElement || document).appendChild(style);
+        })();
+        """
+        controller.addUserScript(WKUserScript(
+            source: prelude,
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: false
+        ))
+        // Stage 2 — Dark Reader's full library.
         controller.addUserScript(WKUserScript(
             source: source,
             injectionTime: .atDocumentStart,
             forMainFrameOnly: false
         ))
+        // Stage 3 — enable Dark Reader once the DOM is parsed, then
+        // remove our prelude (Dark Reader's own theme is now authoritative
+        // and our overrides would otherwise leak into image alt-text /
+        // form controls).
         let bootstrap = """
         (() => {
           if (typeof DarkReader === 'undefined') return;
@@ -69,6 +118,8 @@ struct WebViewer: NSViewRepresentable {
               contrast: 90,
               sepia: 10
             });
+            const prelude = document.getElementById('__glean_dark_prelude__');
+            if (prelude) prelude.remove();
           } catch (_) {}
         })();
         """
