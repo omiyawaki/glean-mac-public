@@ -10,8 +10,23 @@ CONFIG="${CONFIG:-debug}"
 APP="$HOME/Applications/Glean.app"
 BIN="$REPO/.build/arm64-apple-macosx/$CONFIG/GleanMac"
 LEGACY_APP="$HOME/Applications/glean.app"
-TOOLS_REPO="${APPLE_APP_TOOLS_REPO:-$REPO/../apple-app-tools}"
 
+# Package.swift declares the apple-app-tools dependency as `.package(path:
+# "../apple-app-tools")`, which is relative to REPO. The canonical
+# checkout lives at ~/tools/apple-app-tools, so that path resolves when
+# REPO is ~/tools/glean-mac, but auto-deploy invokes us from a worktree
+# under ~/.apple-app-tools/deploy-checkouts/glean-mac/ where the sibling
+# directory doesn't exist. If the sibling is missing, drop a temporary
+# symlink to the canonical location and clean it up on exit.
+SIBLING="$REPO/../apple-app-tools"
+SIBLING_CANONICAL="$HOME/tools/apple-app-tools"
+SIBLING_SYMLINK=""
+if [[ ! -e "$SIBLING" && -d "$SIBLING_CANONICAL" ]]; then
+    ln -s "$SIBLING_CANONICAL" "$SIBLING"
+    SIBLING_SYMLINK="$SIBLING"
+    trap 'rm -f "$SIBLING_SYMLINK"' EXIT
+fi
+TOOLS_REPO="${APPLE_APP_TOOLS_REPO:-$SIBLING_CANONICAL}"
 if [[ ! -d "$TOOLS_REPO" ]]; then
     echo "apple-app-tools repo not found at: $TOOLS_REPO" >&2
     exit 1
