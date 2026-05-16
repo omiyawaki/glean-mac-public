@@ -72,3 +72,21 @@ PLIST
 fi
 
 echo "Done: ${APP}"
+
+# Opt-in: when invoked with --verify (or BUILD_APP_VERIFY=1), chain into
+# apple-app-tools auto-deploy verify. This runs the smoke check, publishes
+# the verified/glean-mac/<sha> tag, and notifies peer machines so they
+# auto-deploy this commit. Off by default so the smoke launch does not
+# disrupt iterative development builds.
+VERIFY=0
+for arg in "$@"; do
+    if [[ "$arg" == "--verify" ]]; then
+        VERIFY=1
+    fi
+done
+if [[ "${BUILD_APP_VERIFY:-0}" == "1" ]]; then
+    VERIFY=1
+fi
+if [[ "$VERIFY" == "1" ]]; then
+    "$TOOLS_REPO/.build/release/apple-app-tools" auto-deploy verify --app glean-mac
+fi
