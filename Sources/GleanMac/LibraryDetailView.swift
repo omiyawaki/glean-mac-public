@@ -48,6 +48,13 @@ struct LibraryDetailView: View {
     let store: LibraryDetailStore
     @Binding var inspectorPresented: Bool
     @Binding var query: String
+    /// nil = follow system appearance, non-nil = user override.
+    @State private var pdfDarkModeOverride: Bool?
+    @Environment(\.colorScheme) private var systemColorScheme
+
+    private var pdfDarkMode: Bool {
+        pdfDarkModeOverride ?? (systemColorScheme == .dark)
+    }
 
     var body: some View {
         Group {
@@ -75,6 +82,20 @@ struct LibraryDetailView: View {
             }
         }
         .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    pdfDarkModeOverride = !pdfDarkMode
+                } label: {
+                    Label(
+                        pdfDarkMode ? "Light PDF" : "Dark PDF",
+                        systemImage: pdfDarkMode ? "sun.max" : "moon"
+                    )
+                }
+                .help(pdfDarkMode
+                      ? "Render PDF with light page background"
+                      : "Render PDF with dark page background (inverts colors)")
+                .disabled(store.record == nil)
+            }
             ToolbarItem(placement: .primaryAction) {
                 Button {
                     ExternalPDFOpener.system.open(openablePDFURL)
@@ -118,7 +139,7 @@ struct LibraryDetailView: View {
     private func pdfPane(for record: LibraryRecord) -> some View {
         if let url = pdfURL(for: record) {
             if FileManager.default.fileExists(atPath: url.path) {
-                PDFViewer(url: url)
+                PDFViewer(url: url, darkMode: pdfDarkMode)
             } else {
                 ContentUnavailableView {
                     Label("PDF not downloaded", systemImage: "icloud.and.arrow.down")
