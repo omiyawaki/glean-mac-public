@@ -12,12 +12,20 @@ struct BacklogDetailView: View {
         Group {
             if let entry, let url = doiURL(for: entry) {
                 WebViewer(url: url) { downloadedURL in
+                    // Forward the currently-selected entry's citekey so
+                    // /attach can force-attach to it rather than guessing
+                    // by extracting a DOI from the PDF text. Critical for
+                    // older Physics Today / similar legacy publishers whose
+                    // PDFs don't print their own DOI anywhere — body text
+                    // only contains DOIs of cited works.
+                    let ck = entry.citekey
                     actionQueue.enqueue(
                         title: "Attach PDF",
                         detail: downloadedURL.lastPathComponent,
                         systemImage: "doc.richtext"
                     ) {
-                        try await IntakeActions.attach(file: downloadedURL)
+                        try await IntakeActions.attach(file: downloadedURL,
+                                                       citekey: ck)
                     }
                 } onDownloadFailed: { message in
                     actionError = message

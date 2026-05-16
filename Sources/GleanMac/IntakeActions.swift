@@ -64,12 +64,20 @@ enum IntakeActions {
         try await post(path: "/api/author/dismiss", form: ["author": author])
     }
 
-    /// Multipart upload of a local PDF to the backend's /attach endpoint. The
+    /// Multipart upload of a local PDF to home's /attach endpoint. The
     /// server runs a magic-byte check, extracts a DOI from the first
     /// pages, matches against the backlog, and on a hit attaches the
     /// PDF via `glean attach --move` (which also removes the entry
     /// from pdf_backlog.json — picked up by the SSE watcher).
-    static func attach(file url: URL) async throws {
+    ///
+    /// `citekey` is optional but should be supplied whenever the caller
+    /// already knows which backlog entry the download is for. The
+    /// backend then bypasses DOI extraction entirely and force-attaches to
+    /// that citekey. This is the only
+    /// way to land a PDF whose body doesn't print its own DOI — Physics
+    /// Today's PT.3.NNNN papers are the canonical example; the
+    /// downloaded PDF only contains DOIs of cited works.
+    static func attach(file url: URL, citekey: String? = nil) async throws {
         let fileData = try Data(contentsOf: url)
         let boundary = UUID().uuidString
 
@@ -78,7 +86,14 @@ enum IntakeActions {
         body.append("Content-Disposition: form-data; name=\"file\"; filename=\"\(url.lastPathComponent)\"\r\n".data(using: .utf8)!)
         body.append("Content-Type: application/pdf\r\n\r\n".data(using: .utf8)!)
         body.append(fileData)
-        body.append("\r\n--\(boundary)--\r\n".data(using: .utf8)!)
+        body.append("\r\n".data(using: .utf8)!)
+        if let citekey, !citekey.isEmpty {
+            body.append("--\(boundary)\r\n".data(using: .utf8)!)
+            body.append("Content-Disposition: form-data; name=\"citekey\"\r\n\r\n".data(using: .utf8)!)
+            body.append(citekey.data(using: .utf8)!)
+            body.append("\r\n".data(using: .utf8)!)
+        }
+        body.append("--\(boundary)--\r\n".data(using: .utf8)!)
 
         var request = URLRequest(url: baseURL.appendingPathComponent("/attach"))
         request.httpMethod = "POST"
