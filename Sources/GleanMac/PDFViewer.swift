@@ -11,8 +11,8 @@ import AppKit
 /// fill tuned to a soft-dark color rather than pure white. Pure-white fill is
 /// Preview's "Invert Colors" accessibility mode and yields stark `#000000`
 /// page backgrounds and `#ffffff` text; the softened fill maps white pages
-/// to ~`#181818` (matching Glean's WebViewer Dark Reader theme and macOS
-/// native dark window backgrounds) and black text to ~`#e7e7e7`. Everything
+/// to ~`#1e1e1e` (matching native macOS dark document backgrounds) and black
+/// text to ~`#e1e1e1`. Everything
 /// on the page is still inverted, including embedded photos; selective
 /// per-image inversion would require walking each page's content stream
 /// with `CGPDFScanner` to recover image XObject rects.
@@ -54,12 +54,10 @@ struct PDFViewer: NSViewRepresentable {
             }
         }
 
-        // Match the page-background color the .difference fill produces
-        // (see InvertedPDFPage.softDarkLevel) so the gutter around pages
-        // visually merges with the inverted page background instead of
-        // forming a visible seam.
+        // Match the page-background color the .difference fill produces so
+        // the gutter around pages visually shares the same native dark surface.
         nsView.backgroundColor = darkMode
-            ? NSColor(white: 1.0 - InvertedPDFPage.softDarkLevel, alpha: 1.0)
+            ? PDFDarkModePalette.pageBackgroundColor
             : .clear
     }
 
@@ -72,31 +70,83 @@ struct PDFViewer: NSViewRepresentable {
     }
 }
 
-/// Renders the page normally, then composites a soft-dark fill with
-/// `CGBlendMode.difference` over the page bounds. `dest = |fill - dest|`
-/// is a per-pixel color invert; choosing the fill brightness controls the
-/// extremes of the inverted output. With `fill = (1 - softDarkLevel)`:
-///   white page  -> `(1 - fill) = softDarkLevel`   ≈ `#181818`
-///   black text  -> `fill        = 1 - softDarkLevel` ≈ `#e7e7e7`
-/// matching Glean's WebViewer Dark Reader theme and macOS native dark
-/// window backgrounds rather than the stark `#000000`/`#ffffff` extremes
+/// Seeds the page with a white paper fill, renders the page normally, then
+/// composites a soft-dark fill with `CGBlendMode.difference` over the page
+/// bounds. The white seed matters because many publisher PDFs leave the page
+/// background implicit instead of drawing a white rectangle. `dest = |fill -
+/// dest|` is a per-pixel color invert; choosing the fill brightness controls
+/// the extremes of the inverted output. With `fill = (1 - softDarkLevel)`:
+///   white page  -> `(1 - fill) = softDarkLevel`   ≈ `#1e1e1e`
+///   black text  -> `fill        = 1 - softDarkLevel` ≈ `#e1e1e1`
+/// matching native macOS dark document backgrounds rather than the stark
+/// `#000000`/`#ffffff` extremes
 /// of a pure-white-fill inversion. Baking this into `draw(with:to:)` (vs.
 /// a layer filter) means the inversion follows zoom, print/export, and
 /// PDFKit's tiling without extra layer plumbing.
 final class InvertedPDFPage: PDFPage {
-    /// Target page-background gray after inversion. 0.094 ≈ `#181818`,
-    /// matching `WebViewer.installDarkReader`'s prelude background.
-    static let softDarkLevel: CGFloat = 0.094
+    /// Target page-background gray after inversion, matching the resolved
+    /// macOS dark document background on this SDK.
+    static var softDarkLevel: CGFloat {
+        PDFDarkModePalette.pageBackgroundLevel
+    }
 
     override func draw(with box: PDFDisplayBox, to context: CGContext) {
-        super.draw(with: box, to: context)
         context.saveGState()
-        context.setBlendMode(.difference)
-        let fillLevel = 1.0 - Self.softDarkLevel
-        context.setFillColor(
-            NSColor(white: fillLevel, alpha: 1.0).cgColor
-        )
+        context.setFillColor(NSColor.white.cgColor)
         context.fill(bounds(for: box))
         context.restoreGState()
+
+        super.draw(with: box, to: context)
+
+        context.saveGState()
+        context.setBlendMode(.difference)
+        context.setFillColor(PDFDarkModePalette.inversionFillColor.cgColor)
+        context.fill(bounds(for: box))
+        context.restoreGState()
+    }
+}
+
+enum PDFDarkModePalette {
+    private static let fallbackPageBackgroundLevel: CGFloat = 30.0 / 255.0
+
+    static var pageBackgroundColor: NSColor {
+        resolvedDarkAquaColor(
+            NSColor.textBackgroundColor,
+            fallback: NSColor(white: fallbackPageBackgroundLevel, alpha: 1.0)
+        )
+    }
+
+    static var inversionFillColor: NSColor {
+        let background = pageBackgroundColor
+            .usingColorSpace(NSColorSpace.deviceRGB)
+            ?? NSColor(white: fallbackPageBackgroundLevel, alpha: 1.0)
+        return NSColor(
+            red: 1.0 - background.redComponent,
+            green: 1.0 - background.greenComponent,
+            blue: 1.0 - background.blueComponent,
+            alpha: 1.0
+        )
+    }
+
+    static var pageBackgroundLevel: CGFloat {
+        let color = pageBackgroundColor
+            .usingColorSpace(NSColorSpace.deviceRGB)
+            ?? NSColor(white: fallbackPageBackgroundLevel, alpha: 1.0)
+        return (color.redComponent + color.greenComponent + color.blueComponent) / 3.0
+    }
+
+    private static func resolvedDarkAquaColor(
+        _ color: NSColor,
+        fallback: NSColor
+    ) -> NSColor {
+        guard let appearance = NSAppearance(named: .darkAqua) else {
+            return fallback
+        }
+
+        var resolved = fallback
+        appearance.performAsCurrentDrawingAppearance {
+            resolved = color.usingColorSpace(NSColorSpace.deviceRGB) ?? fallback
+        }
+        return resolved
     }
 }
