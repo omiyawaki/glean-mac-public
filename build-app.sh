@@ -36,8 +36,25 @@ echo "Building (configuration: ${CONFIG})..."
 swift build -c "$CONFIG"
 
 echo "Wrapping in app bundle at ${APP}..."
-if [[ "$LEGACY_APP" != "$APP" && -e "$LEGACY_APP" ]]; then
-    rm -rf "$LEGACY_APP"
+# Drop the lowercase legacy bundle if it's a distinct artifact from any
+# bundle we're managing. APFS is case-insensitive by default, so `glean.app`
+# and `Glean.app` share an inode. Compare inodes against every
+# managed bundle path before removing.
+if [[ -e "$LEGACY_APP" ]]; then
+    LEGACY_INODE="$(stat -f %i "$LEGACY_APP" 2>/dev/null || echo legacy)"
+    SAFE_TO_DELETE=1
+    for managed in "$HOME/Applications/Glean.app"; do
+        if [[ -e "$managed" ]]; then
+            MANAGED_INODE="$(stat -f %i "$managed" 2>/dev/null || echo managed)"
+            if [[ "$LEGACY_INODE" == "$MANAGED_INODE" ]]; then
+                SAFE_TO_DELETE=0
+                break
+            fi
+        fi
+    done
+    if [[ "$SAFE_TO_DELETE" == "1" ]]; then
+        rm -rf "$LEGACY_APP"
+    fi
 fi
 RESOURCE_ARGS=()
 if [[ -f "$REPO/Resources/Assets.car" ]]; then
@@ -50,10 +67,12 @@ if [[ -d "$REPO/Resources/AppIcon.icon" ]]; then
     RESOURCE_ARGS+=(--resource "$REPO/Resources/AppIcon.icon")
 fi
 
+PLIST_ARG="$REPO/Resources/Info.plist"
+
 swift run --package-path "$TOOLS_REPO" -c release apple-app-tools mac package \
     --config "$REPO/AppleAppBlueprint.yaml" \
     --binary "$BIN" \
-    --plist "$REPO/Resources/Info.plist" \
+    --plist "$PLIST_ARG" \
     "${RESOURCE_ARGS[@]}"
 
 # SwiftPM emits target resource bundles next to the binary in .build/.
