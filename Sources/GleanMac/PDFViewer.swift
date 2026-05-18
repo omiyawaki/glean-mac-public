@@ -33,12 +33,13 @@ struct PDFThumbnailSidebarConfiguration: Equatable {
 struct PDFViewer: NSViewRepresentable {
     let url: URL?
     var darkMode: Bool = false
+    var thumbnailSidebarVisible: Bool = true
 
-    func makeNSView(context: Context) -> PDFView {
-        let view = PDFView()
-        view.autoScales = true
-        view.displayMode = .singlePageContinuous
-        view.displayDirection = .vertical
+    func makeNSView(context: Context) -> PDFThumbnailSplitView {
+        let view = PDFThumbnailSplitView()
+        view.pdfView.autoScales = true
+        view.pdfView.displayMode = .singlePageContinuous
+        view.pdfView.displayDirection = .vertical
         return view
     }
 
@@ -46,33 +47,36 @@ struct PDFViewer: NSViewRepresentable {
         Coordinator()
     }
 
-    func updateNSView(_ nsView: PDFView, context: Context) {
+    func updateNSView(_ nsView: PDFThumbnailSplitView, context: Context) {
+        let pdfView = nsView.pdfView
         let coord = context.coordinator
-        let urlChanged = nsView.document?.documentURL != url
+        let urlChanged = pdfView.document?.documentURL != url
         let modeChanged = coord.darkMode != darkMode
         coord.darkMode = darkMode
 
+        nsView.setThumbnailSidebarVisible(thumbnailSidebarVisible)
+
         if urlChanged || modeChanged {
-            let savedDest = nsView.currentDestination
+            let savedDest = pdfView.currentDestination
             if let url {
                 let doc = PDFDocument(url: url)
                 doc?.delegate = coord
-                nsView.document = doc
+                nsView.setDocument(doc)
             } else {
-                nsView.document = nil
+                nsView.setDocument(nil)
             }
             // Restore scroll position when the only thing that changed is
             // dark mode — without this the toggle jumps back to page 1.
             if modeChanged, !urlChanged, let dest = savedDest {
-                nsView.go(to: dest)
+                pdfView.go(to: dest)
             }
         }
 
         // Match the page-background color the .difference fill produces so
         // the gutter around pages visually shares the same native dark surface.
-        nsView.backgroundColor = darkMode
-            ? PDFDarkModePalette.pageBackgroundColor
-            : .clear
+        nsView.setPDFBackgroundColor(
+            darkMode ? PDFDarkModePalette.pageBackgroundColor : .clear
+        )
     }
 
     final class Coordinator: NSObject, PDFDocumentDelegate {
@@ -127,6 +131,16 @@ final class PDFThumbnailSplitView: NSView, NSSplitViewDelegate {
         if visible {
             applyInitialThumbnailWidthIfNeeded()
         }
+    }
+
+    func setDocument(_ document: PDFDocument?) {
+        pdfView.document = document
+        thumbnailView.pdfView = pdfView
+    }
+
+    func setPDFBackgroundColor(_ color: NSColor) {
+        pdfView.backgroundColor = color
+        thumbnailView.backgroundColor = color
     }
 
     func splitView(

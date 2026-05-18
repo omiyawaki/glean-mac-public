@@ -1,4 +1,5 @@
 import AppKit
+import PDFKit
 import XCTest
 @testable import GleanMac
 
@@ -61,5 +62,32 @@ final class PDFViewerTests: XCTestCase {
 
         XCTAssertEqual(minCoordinate, 540)
         XCTAssertEqual(maxCoordinate, 680)
+    }
+
+    @MainActor
+    func testThumbnailSplitViewSetsAndClearsDocumentOnMainView() {
+        let view = PDFThumbnailSplitView(configuration: .previewLike)
+        let document = PDFDocument()
+
+        view.setDocument(document)
+
+        XCTAssertIdentical(view.pdfView.document, document)
+        XCTAssertIdentical(view.thumbnailView.pdfView, view.pdfView)
+
+        view.setDocument(nil)
+
+        XCTAssertNil(view.pdfView.document)
+        XCTAssertIdentical(view.thumbnailView.pdfView, view.pdfView)
+    }
+
+    @MainActor
+    func testThumbnailSplitViewAppliesMatchingBackgroundToPDFAndThumbnails() {
+        let view = PDFThumbnailSplitView(configuration: .previewLike)
+        let color = NSColor(calibratedWhite: 0.2, alpha: 1.0)
+
+        view.setPDFBackgroundColor(color)
+
+        XCTAssertEqual(view.pdfView.backgroundColor, color)
+        XCTAssertEqual(view.thumbnailView.backgroundColor, color)
     }
 }
