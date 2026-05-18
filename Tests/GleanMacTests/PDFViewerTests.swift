@@ -81,28 +81,32 @@ final class PDFViewerTests: XCTestCase {
     }
 
     @MainActor
-    func testThumbnailSplitViewAppliesMatchingBackgroundToPDFAndThumbnails() {
+    func testThumbnailSplitViewAppliesPDFBackgroundOnlyToMainPDFView() {
         let view = PDFThumbnailSplitView(configuration: .previewLike)
         let color = NSColor(calibratedWhite: 0.2, alpha: 1.0)
 
         view.setPDFBackgroundColor(color)
 
         XCTAssertEqual(view.pdfView.backgroundColor, color)
-        XCTAssertEqual(view.thumbnailView.backgroundColor, color)
+        XCTAssertEqual(view.thumbnailView.backgroundColor?.alphaComponent, 0)
     }
 
     @MainActor
-    func testThumbnailSplitViewAppliesAndClearsDarkThumbnailFilter() {
+    func testThumbnailSplitViewKeepsThumbnailChromeNativeInDarkMode() {
         let view = PDFThumbnailSplitView(configuration: .previewLike)
 
         view.setThumbnailDarkMode(true)
 
-        XCTAssertTrue(view.thumbnailView.wantsLayer)
-        XCTAssertEqual(view.thumbnailView.backgroundColor, .white)
-        XCTAssertEqual(view.thumbnailView.layer?.filters?.count, 1)
+        XCTAssertNil(view.thumbnailView.layer?.filters)
+        XCTAssertEqual(view.thumbnailView.backgroundColor?.alphaComponent, 0)
+        let backgroundView = view.thumbnailPane.subviews
+            .first { $0 is NSVisualEffectView } as? NSVisualEffectView
+        XCTAssertEqual(backgroundView?.material, NSVisualEffectView.Material.sidebar)
+        XCTAssertEqual(backgroundView?.blendingMode, NSVisualEffectView.BlendingMode.withinWindow)
 
         view.setThumbnailDarkMode(false)
 
         XCTAssertNil(view.thumbnailView.layer?.filters)
+        XCTAssertEqual(view.thumbnailView.backgroundColor?.alphaComponent, 0)
     }
 }
