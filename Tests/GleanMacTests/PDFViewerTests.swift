@@ -88,7 +88,7 @@ final class PDFViewerTests: XCTestCase {
         view.setPDFBackgroundColor(color)
 
         XCTAssertEqual(view.pdfView.backgroundColor, color)
-        XCTAssertEqual(view.thumbnailView.backgroundColor?.alphaComponent, 0)
+        XCTAssertEqual(view.thumbnailView.backgroundColor.alphaComponent, 0)
     }
 
     @MainActor
@@ -98,7 +98,7 @@ final class PDFViewerTests: XCTestCase {
         view.setThumbnailDarkMode(true)
 
         XCTAssertNil(view.thumbnailView.layer?.filters)
-        XCTAssertEqual(view.thumbnailView.backgroundColor?.alphaComponent, 0)
+        XCTAssertEqual(view.thumbnailView.backgroundColor.alphaComponent, 0)
         let backgroundView = view.thumbnailPane.subviews
             .first { $0 is NSVisualEffectView } as? NSVisualEffectView
         XCTAssertEqual(backgroundView?.material, NSVisualEffectView.Material.sidebar)
@@ -107,7 +107,7 @@ final class PDFViewerTests: XCTestCase {
         view.setThumbnailDarkMode(false)
 
         XCTAssertNil(view.thumbnailView.layer?.filters)
-        XCTAssertEqual(view.thumbnailView.backgroundColor?.alphaComponent, 0)
+        XCTAssertEqual(view.thumbnailView.backgroundColor.alphaComponent, 0)
     }
 
     @MainActor
@@ -130,6 +130,31 @@ final class PDFViewerTests: XCTestCase {
 
         XCTAssertEqual(background, PDFDarkModePalette.pageBackgroundLevel, accuracy: 0.04)
         XCTAssertGreaterThan(brightestPixel, 0.70)
+    }
+
+    @MainActor
+    func testPDFThumbnailSidebarUsesDarkPageImagesWithoutInvertingChrome() throws {
+        let url = try makeImplicitBackgroundPDF()
+        let delegate = DarkPageDelegate()
+        let document = try XCTUnwrap(PDFDocument(url: url))
+        document.delegate = delegate
+        let view = PDFThumbnailSplitView(configuration: .previewLike)
+        view.frame = NSRect(x: 0, y: 0, width: 500, height: 500)
+
+        view.setDocument(document)
+        view.setThumbnailDarkMode(true)
+        view.layoutSubtreeIfNeeded()
+
+        let item = try XCTUnwrap(view.thumbnailView.thumbnailItems.first)
+        let image = try XCTUnwrap(item.thumbnailImage)
+        XCTAssertGreaterThan(item.bounds.width, 0)
+        XCTAssertGreaterThan(item.bounds.height, 0)
+        let thumbnailBackground = try averageGray(
+            in: image,
+            rect: CGRect(x: 90, y: 90, width: 12, height: 12)
+        )
+
+        XCTAssertEqual(thumbnailBackground, PDFDarkModePalette.pageBackgroundLevel, accuracy: 0.08)
     }
 
     private final class DarkPageDelegate: NSObject, PDFDocumentDelegate {
@@ -163,6 +188,10 @@ final class PDFViewerTests: XCTestCase {
 
     private func averageGray(in image: NSImage, rect: CGRect) throws -> CGFloat {
         let cgImage = try XCTUnwrap(image.cgImage(forProposedRect: nil, context: nil, hints: nil))
+        return try averageGray(in: cgImage, rect: rect)
+    }
+
+    private func averageGray(in image: CGImage, rect: CGRect) throws -> CGFloat {
         let width = Int(rect.width)
         let height = Int(rect.height)
         let bytesPerPixel = 4
@@ -183,11 +212,11 @@ final class PDFViewerTests: XCTestCase {
             return 0
         }
 
-        context.draw(cgImage, in: CGRect(
+        context.draw(image, in: CGRect(
             x: -rect.origin.x,
             y: -rect.origin.y,
-            width: CGFloat(cgImage.width),
-            height: CGFloat(cgImage.height)
+            width: CGFloat(image.width),
+            height: CGFloat(image.height)
         ))
 
         var total: CGFloat = 0

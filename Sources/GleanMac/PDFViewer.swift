@@ -92,7 +92,7 @@ struct PDFViewer: NSViewRepresentable {
 @MainActor
 final class PDFThumbnailSplitView: NSView, NSSplitViewDelegate {
     let pdfView: PDFView
-    let thumbnailView: PDFThumbnailView
+    let thumbnailView: PDFThumbnailSidebarView
     let splitView = NSSplitView()
     let thumbnailPane = NSView()
 
@@ -105,7 +105,7 @@ final class PDFThumbnailSplitView: NSView, NSSplitViewDelegate {
 
     init(
         pdfView: PDFView = PDFView(),
-        thumbnailView: PDFThumbnailView = PDFThumbnailView(),
+        thumbnailView: PDFThumbnailSidebarView = PDFThumbnailSidebarView(),
         configuration: PDFThumbnailSidebarConfiguration = .previewLike
     ) {
         self.pdfView = pdfView
@@ -145,9 +145,9 @@ final class PDFThumbnailSplitView: NSView, NSSplitViewDelegate {
     }
 
     func setThumbnailDarkMode(_: Bool) {
-        // InvertedPDFPage handles page pixels. Keep PDFThumbnailView chrome native.
         thumbnailView.layer?.filters = nil
         thumbnailView.backgroundColor = .clear
+        thumbnailView.reloadThumbnails()
     }
 
     func splitView(
@@ -200,7 +200,6 @@ final class PDFThumbnailSplitView: NSView, NSSplitViewDelegate {
 
         thumbnailView.pdfView = pdfView
         thumbnailView.thumbnailSize = configuration.thumbnailSize
-        thumbnailView.maximumNumberOfColumns = 1
         thumbnailView.allowsDragging = false
         thumbnailView.allowsMultipleSelection = false
         thumbnailView.backgroundColor = .clear
@@ -237,6 +236,205 @@ final class PDFThumbnailSplitView: NSView, NSSplitViewDelegate {
             splitView.bounds.width - configuration.defaultWidth,
             ofDividerAt: 0
         )
+    }
+}
+
+@MainActor
+final class PDFThumbnailSidebarView: NSScrollView {
+    weak var pdfView: PDFView? {
+        didSet {
+            if oldValue !== pdfView {
+                updatePageChangeObserver()
+            }
+            reloadThumbnails()
+        }
+    }
+
+    var thumbnailSize = CGSize(width: 96, height: 128) {
+        didSet { reloadThumbnails() }
+    }
+
+    var maximumNumberOfColumns = 1
+    var allowsDragging = false
+    var allowsMultipleSelection = false
+
+    override var backgroundColor: NSColor {
+        didSet {
+            drawsBackground = backgroundColor.alphaComponent > 0
+            contentView.backgroundColor = backgroundColor
+        }
+    }
+
+    private(set) var thumbnailItems: [PDFThumbnailItemView] = []
+
+    private let stackView = NSStackView()
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        configureViews()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+
+    func reloadThumbnails() {
+        thumbnailItems.forEach { $0.removeFromSuperview() }
+        thumbnailItems.removeAll()
+
+        guard let document = pdfView?.document else { return }
+        for index in 0..<document.pageCount {
+            guard let page = document.page(at: index) else { continue }
+            let item = PDFThumbnailItemView(
+                page: page,
+                pageIndex: index,
+                thumbnailSize: thumbnailSize
+            )
+            item.target = self
+            item.action = #selector(selectThumbnail(_:))
+            thumbnailItems.append(item)
+            stackView.addArrangedSubview(item)
+        }
+        updateSelection()
+    }
+
+    @objc
+    private func selectThumbnail(_ sender: PDFThumbnailItemView) {
+        pdfView?.go(to: sender.page)
+        updateSelection()
+    }
+
+    private func configureViews() {
+        drawsBackground = false
+        borderType = .noBorder
+        hasVerticalScroller = true
+        hasHorizontalScroller = false
+        autohidesScrollers = false
+        scrollerStyle = .overlay
+
+        stackView.orientation = .vertical
+        stackView.alignment = .centerX
+        stackView.spacing = 12
+        stackView.edgeInsets = NSEdgeInsets(top: 12, left: 0, bottom: 12, right: 0)
+        stackView.translatesAutoresizingMaskIntoConstraints = false
+
+        documentView = stackView
+        NSLayoutConstraint.activate([
+            stackView.widthAnchor.constraint(equalTo: contentView.widthAnchor)
+        ])
+    }
+
+    private func updatePageChangeObserver() {
+        NotificationCenter.default.removeObserver(self)
+        guard let pdfView else {
+            return
+        }
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(pdfViewPageChanged(_:)),
+            name: .PDFViewPageChanged,
+            object: pdfView,
+        )
+    }
+
+    @objc
+    private func pdfViewPageChanged(_ notification: Notification) {
+        updateSelection()
+    }
+
+    private func updateSelection() {
+        guard let currentPage = pdfView?.currentPage else {
+            thumbnailItems.forEach { $0.isSelected = false }
+            return
+        }
+        thumbnailItems.forEach { $0.isSelected = $0.page === currentPage }
+    }
+}
+
+@MainActor
+final class PDFThumbnailItemView: NSControl {
+    let page: PDFPage
+    let pageIndex: Int
+
+    var thumbnailImage: NSImage? {
+        imageView.image
+    }
+
+    var isSelected = false {
+        didSet { needsDisplay = true }
+    }
+
+    private let imageView = NSImageView()
+    private let label = NSTextField(labelWithString: "")
+
+    init(page: PDFPage, pageIndex: Int, thumbnailSize: CGSize) {
+        self.page = page
+        self.pageIndex = pageIndex
+        super.init(frame: NSRect(
+            x: 0,
+            y: 0,
+            width: thumbnailSize.width + 32,
+            height: thumbnailSize.height + 28
+        ))
+        configureViews(thumbnailSize: thumbnailSize)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        sendAction(action, to: target)
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        guard isSelected else { return }
+        NSColor.selectedContentBackgroundColor.withAlphaComponent(0.18).setFill()
+        bounds.insetBy(dx: 4, dy: 2).fill()
+    }
+
+    private func configureViews(thumbnailSize: CGSize) {
+        translatesAutoresizingMaskIntoConstraints = false
+        imageView.translatesAutoresizingMaskIntoConstraints = false
+        label.translatesAutoresizingMaskIntoConstraints = false
+
+        imageView.image = page.thumbnail(of: thumbnailSize, for: .cropBox)
+        imageView.imageAlignment = .alignCenter
+        imageView.imageScaling = .scaleProportionallyUpOrDown
+        imageView.wantsLayer = true
+        imageView.layer?.shadowColor = NSColor.black.withAlphaComponent(0.45).cgColor
+        imageView.layer?.shadowOpacity = 1
+        imageView.layer?.shadowRadius = 2
+        imageView.layer?.shadowOffset = CGSize(width: 0, height: -1)
+
+        label.stringValue = "\(pageIndex + 1)"
+        label.alignment = .center
+        label.textColor = .secondaryLabelColor
+        label.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+
+        addSubview(imageView)
+        addSubview(label)
+
+        NSLayoutConstraint.activate([
+            widthAnchor.constraint(equalToConstant: thumbnailSize.width + 32),
+            heightAnchor.constraint(equalToConstant: thumbnailSize.height + 28),
+
+            imageView.topAnchor.constraint(equalTo: topAnchor),
+            imageView.centerXAnchor.constraint(equalTo: centerXAnchor),
+            imageView.widthAnchor.constraint(equalToConstant: thumbnailSize.width),
+            imageView.heightAnchor.constraint(equalToConstant: thumbnailSize.height),
+
+            label.leadingAnchor.constraint(equalTo: leadingAnchor),
+            label.trailingAnchor.constraint(equalTo: trailingAnchor),
+            label.topAnchor.constraint(equalTo: imageView.bottomAnchor, constant: 6)
+        ])
     }
 }
 
