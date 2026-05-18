@@ -84,6 +84,129 @@ struct PDFViewer: NSViewRepresentable {
     }
 }
 
+@MainActor
+final class PDFThumbnailSplitView: NSView, NSSplitViewDelegate {
+    let pdfView: PDFView
+    let thumbnailView: PDFThumbnailView
+    let splitView = NSSplitView()
+    let thumbnailPane = NSView()
+
+    private let mainPane = NSView()
+    private let configuration: PDFThumbnailSidebarConfiguration
+    private var didApplyInitialThumbnailWidth = false
+
+    private(set) var isThumbnailSidebarVisible = true
+
+    init(
+        pdfView: PDFView = PDFView(),
+        thumbnailView: PDFThumbnailView = PDFThumbnailView(),
+        configuration: PDFThumbnailSidebarConfiguration = .previewLike
+    ) {
+        self.pdfView = pdfView
+        self.thumbnailView = thumbnailView
+        self.configuration = configuration
+        super.init(frame: .zero)
+        configureViews()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func layout() {
+        super.layout()
+        applyInitialThumbnailWidthIfNeeded()
+    }
+
+    func setThumbnailSidebarVisible(_ visible: Bool) {
+        guard visible != isThumbnailSidebarVisible else { return }
+        isThumbnailSidebarVisible = visible
+        thumbnailPane.isHidden = !visible
+        splitView.adjustSubviews()
+        if visible {
+            applyInitialThumbnailWidthIfNeeded()
+        }
+    }
+
+    func splitView(
+        _ splitView: NSSplitView,
+        constrainMinCoordinate proposedMinimumPosition: CGFloat,
+        ofSubviewAt dividerIndex: Int
+    ) -> CGFloat {
+        guard dividerIndex == 0 else { return proposedMinimumPosition }
+        return max(
+            proposedMinimumPosition,
+            splitView.bounds.width - configuration.maximumWidth
+        )
+    }
+
+    func splitView(
+        _ splitView: NSSplitView,
+        constrainMaxCoordinate proposedMaximumPosition: CGFloat,
+        ofSubviewAt dividerIndex: Int
+    ) -> CGFloat {
+        guard dividerIndex == 0 else { return proposedMaximumPosition }
+        return min(
+            proposedMaximumPosition,
+            splitView.bounds.width - configuration.minimumWidth
+        )
+    }
+
+    private func configureViews() {
+        splitView.translatesAutoresizingMaskIntoConstraints = false
+        splitView.isVertical = true
+        splitView.dividerStyle = .thin
+        splitView.delegate = self
+
+        mainPane.translatesAutoresizingMaskIntoConstraints = false
+        thumbnailPane.translatesAutoresizingMaskIntoConstraints = false
+        pdfView.translatesAutoresizingMaskIntoConstraints = false
+        thumbnailView.translatesAutoresizingMaskIntoConstraints = false
+
+        addSubview(splitView)
+        splitView.addArrangedSubview(mainPane)
+        splitView.addArrangedSubview(thumbnailPane)
+
+        mainPane.addSubview(pdfView)
+        thumbnailPane.addSubview(thumbnailView)
+
+        thumbnailView.pdfView = pdfView
+        thumbnailView.thumbnailSize = configuration.thumbnailSize
+        thumbnailView.maximumNumberOfColumns = 1
+        thumbnailView.allowsDragging = false
+        thumbnailView.allowsMultipleSelection = false
+
+        NSLayoutConstraint.activate([
+            splitView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            splitView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            splitView.topAnchor.constraint(equalTo: topAnchor),
+            splitView.bottomAnchor.constraint(equalTo: bottomAnchor),
+
+            pdfView.leadingAnchor.constraint(equalTo: mainPane.leadingAnchor),
+            pdfView.trailingAnchor.constraint(equalTo: mainPane.trailingAnchor),
+            pdfView.topAnchor.constraint(equalTo: mainPane.topAnchor),
+            pdfView.bottomAnchor.constraint(equalTo: mainPane.bottomAnchor),
+
+            thumbnailView.leadingAnchor.constraint(equalTo: thumbnailPane.leadingAnchor),
+            thumbnailView.trailingAnchor.constraint(equalTo: thumbnailPane.trailingAnchor),
+            thumbnailView.topAnchor.constraint(equalTo: thumbnailPane.topAnchor),
+            thumbnailView.bottomAnchor.constraint(equalTo: thumbnailPane.bottomAnchor)
+        ])
+    }
+
+    private func applyInitialThumbnailWidthIfNeeded() {
+        guard !didApplyInitialThumbnailWidth,
+              splitView.bounds.width > configuration.defaultWidth
+        else { return }
+        didApplyInitialThumbnailWidth = true
+        splitView.setPosition(
+            splitView.bounds.width - configuration.defaultWidth,
+            ofDividerAt: 0
+        )
+    }
+}
+
 /// Seeds the page with a white paper fill, renders the page normally, then
 /// composites a soft-dark fill with `CGBlendMode.difference` over the page
 /// bounds. The white seed matters because many publisher PDFs leave the page
