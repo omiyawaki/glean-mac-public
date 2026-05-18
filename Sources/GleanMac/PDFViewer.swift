@@ -1,6 +1,21 @@
 import SwiftUI
 import PDFKit
 import AppKit
+import CoreImage
+
+struct PDFThumbnailSidebarConfiguration: Equatable {
+    var defaultWidth: CGFloat
+    var minimumWidth: CGFloat
+    var maximumWidth: CGFloat
+    var thumbnailSize: CGSize
+
+    static let previewLike = PDFThumbnailSidebarConfiguration(
+        defaultWidth: 160,
+        minimumWidth: 120,
+        maximumWidth: 260,
+        thumbnailSize: CGSize(width: 96, height: 128)
+    )
+}
 
 /// PDFKit's PDFView wrapped for SwiftUI. Single-page-continuous, autoscales
 /// to width — matches Preview.app's default reading layout. The view diffs
@@ -19,12 +34,13 @@ import AppKit
 struct PDFViewer: NSViewRepresentable {
     let url: URL?
     var darkMode: Bool = false
+    var thumbnailSidebarVisible: Bool = true
 
-    func makeNSView(context: Context) -> PDFView {
-        let view = PDFView()
-        view.autoScales = true
-        view.displayMode = .singlePageContinuous
-        view.displayDirection = .vertical
+    func makeNSView(context: Context) -> PDFThumbnailSplitView {
+        let view = PDFThumbnailSplitView()
+        view.pdfView.autoScales = true
+        view.pdfView.displayMode = .singlePageContinuous
+        view.pdfView.displayDirection = .vertical
         return view
     }
 
@@ -32,33 +48,37 @@ struct PDFViewer: NSViewRepresentable {
         Coordinator()
     }
 
-    func updateNSView(_ nsView: PDFView, context: Context) {
+    func updateNSView(_ nsView: PDFThumbnailSplitView, context: Context) {
+        let pdfView = nsView.pdfView
         let coord = context.coordinator
-        let urlChanged = nsView.document?.documentURL != url
+        let urlChanged = pdfView.document?.documentURL != url
         let modeChanged = coord.darkMode != darkMode
         coord.darkMode = darkMode
 
+        nsView.setThumbnailSidebarVisible(thumbnailSidebarVisible)
+
         if urlChanged || modeChanged {
-            let savedDest = nsView.currentDestination
+            let savedDest = pdfView.currentDestination
             if let url {
                 let doc = PDFDocument(url: url)
                 doc?.delegate = coord
-                nsView.document = doc
+                nsView.setDocument(doc)
             } else {
-                nsView.document = nil
+                nsView.setDocument(nil)
             }
             // Restore scroll position when the only thing that changed is
             // dark mode — without this the toggle jumps back to page 1.
             if modeChanged, !urlChanged, let dest = savedDest {
-                nsView.go(to: dest)
+                pdfView.go(to: dest)
             }
         }
 
         // Match the page-background color the .difference fill produces so
         // the gutter around pages visually shares the same native dark surface.
-        nsView.backgroundColor = darkMode
-            ? PDFDarkModePalette.pageBackgroundColor
-            : .clear
+        nsView.setPDFBackgroundColor(
+            darkMode ? PDFDarkModePalette.pageBackgroundColor : .clear
+        )
+        nsView.setThumbnailDarkMode(darkMode)
     }
 
     final class Coordinator: NSObject, PDFDocumentDelegate {
@@ -67,6 +87,150 @@ struct PDFViewer: NSViewRepresentable {
         func classForPage() -> AnyClass {
             darkMode ? InvertedPDFPage.self : PDFPage.self
         }
+    }
+}
+
+@MainActor
+final class PDFThumbnailSplitView: NSView, NSSplitViewDelegate {
+    let pdfView: PDFView
+    let thumbnailView: PDFThumbnailView
+    let splitView = NSSplitView()
+    let thumbnailPane = NSView()
+
+    private let mainPane = NSView()
+    private let configuration: PDFThumbnailSidebarConfiguration
+    private var didApplyInitialThumbnailWidth = false
+
+    private(set) var isThumbnailSidebarVisible = true
+
+    init(
+        pdfView: PDFView = PDFView(),
+        thumbnailView: PDFThumbnailView = PDFThumbnailView(),
+        configuration: PDFThumbnailSidebarConfiguration = .previewLike
+    ) {
+        self.pdfView = pdfView
+        self.thumbnailView = thumbnailView
+        self.configuration = configuration
+        super.init(frame: .zero)
+        configureViews()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func layout() {
+        super.layout()
+        applyInitialThumbnailWidthIfNeeded()
+    }
+
+    func setThumbnailSidebarVisible(_ visible: Bool) {
+        guard visible != isThumbnailSidebarVisible else { return }
+        isThumbnailSidebarVisible = visible
+        thumbnailPane.isHidden = !visible
+        splitView.adjustSubviews()
+        if visible {
+            applyInitialThumbnailWidthIfNeeded()
+        }
+    }
+
+    func setDocument(_ document: PDFDocument?) {
+        pdfView.document = document
+        thumbnailView.pdfView = pdfView
+    }
+
+    func setPDFBackgroundColor(_ color: NSColor) {
+        pdfView.backgroundColor = color
+        thumbnailView.backgroundColor = color
+    }
+
+    func setThumbnailDarkMode(_ enabled: Bool) {
+        thumbnailView.wantsLayer = true
+        guard enabled else {
+            thumbnailView.layer?.filters = nil
+            return
+        }
+
+        thumbnailView.backgroundColor = .white
+        thumbnailView.layer?.filters = [PDFDarkModePalette.thumbnailInversionFilter]
+    }
+
+    func splitView(
+        _ splitView: NSSplitView,
+        constrainMinCoordinate proposedMinimumPosition: CGFloat,
+        ofSubviewAt dividerIndex: Int
+    ) -> CGFloat {
+        guard dividerIndex == 0 else { return proposedMinimumPosition }
+        return max(
+            proposedMinimumPosition,
+            splitView.bounds.width - configuration.maximumWidth
+        )
+    }
+
+    func splitView(
+        _ splitView: NSSplitView,
+        constrainMaxCoordinate proposedMaximumPosition: CGFloat,
+        ofSubviewAt dividerIndex: Int
+    ) -> CGFloat {
+        guard dividerIndex == 0 else { return proposedMaximumPosition }
+        return min(
+            proposedMaximumPosition,
+            splitView.bounds.width - configuration.minimumWidth
+        )
+    }
+
+    private func configureViews() {
+        splitView.translatesAutoresizingMaskIntoConstraints = false
+        splitView.isVertical = true
+        splitView.dividerStyle = .thin
+        splitView.delegate = self
+
+        mainPane.translatesAutoresizingMaskIntoConstraints = false
+        thumbnailPane.translatesAutoresizingMaskIntoConstraints = false
+        pdfView.translatesAutoresizingMaskIntoConstraints = false
+        thumbnailView.translatesAutoresizingMaskIntoConstraints = false
+
+        addSubview(splitView)
+        splitView.addArrangedSubview(mainPane)
+        splitView.addArrangedSubview(thumbnailPane)
+
+        mainPane.addSubview(pdfView)
+        thumbnailPane.addSubview(thumbnailView)
+
+        thumbnailView.pdfView = pdfView
+        thumbnailView.thumbnailSize = configuration.thumbnailSize
+        thumbnailView.maximumNumberOfColumns = 1
+        thumbnailView.allowsDragging = false
+        thumbnailView.allowsMultipleSelection = false
+
+        NSLayoutConstraint.activate([
+            splitView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            splitView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            splitView.topAnchor.constraint(equalTo: topAnchor),
+            splitView.bottomAnchor.constraint(equalTo: bottomAnchor),
+
+            pdfView.leadingAnchor.constraint(equalTo: mainPane.leadingAnchor),
+            pdfView.trailingAnchor.constraint(equalTo: mainPane.trailingAnchor),
+            pdfView.topAnchor.constraint(equalTo: mainPane.topAnchor),
+            pdfView.bottomAnchor.constraint(equalTo: mainPane.bottomAnchor),
+
+            thumbnailView.leadingAnchor.constraint(equalTo: thumbnailPane.leadingAnchor),
+            thumbnailView.trailingAnchor.constraint(equalTo: thumbnailPane.trailingAnchor),
+            thumbnailView.topAnchor.constraint(equalTo: thumbnailPane.topAnchor),
+            thumbnailView.bottomAnchor.constraint(equalTo: thumbnailPane.bottomAnchor)
+        ])
+    }
+
+    private func applyInitialThumbnailWidthIfNeeded() {
+        guard !didApplyInitialThumbnailWidth,
+              splitView.bounds.width > configuration.defaultWidth
+        else { return }
+        didApplyInitialThumbnailWidth = true
+        splitView.setPosition(
+            splitView.bounds.width - configuration.defaultWidth,
+            ofDividerAt: 0
+        )
     }
 }
 
@@ -133,6 +297,19 @@ enum PDFDarkModePalette {
             .usingColorSpace(NSColorSpace.deviceRGB)
             ?? NSColor(white: fallbackPageBackgroundLevel, alpha: 1.0)
         return (color.redComponent + color.greenComponent + color.blueComponent) / 3.0
+    }
+
+    static var thumbnailInversionFilter: CIFilter {
+        let low = pageBackgroundLevel
+        let high = 1.0 - low
+        let scale = high - low
+        let filter = CIFilter(name: "CIColorMatrix")!
+        filter.setValue(CIVector(x: -scale, y: 0, z: 0, w: 0), forKey: "inputRVector")
+        filter.setValue(CIVector(x: 0, y: -scale, z: 0, w: 0), forKey: "inputGVector")
+        filter.setValue(CIVector(x: 0, y: 0, z: -scale, w: 0), forKey: "inputBVector")
+        filter.setValue(CIVector(x: 0, y: 0, z: 0, w: 1), forKey: "inputAVector")
+        filter.setValue(CIVector(x: high, y: high, z: high, w: 0), forKey: "inputBiasVector")
+        return filter
     }
 
     private static func resolvedDarkAquaColor(

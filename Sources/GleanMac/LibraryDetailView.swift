@@ -50,6 +50,7 @@ struct LibraryDetailView: View {
     @Binding var query: String
     /// nil = follow system appearance, non-nil = user override.
     @State private var pdfDarkModeOverride: Bool?
+    @State private var thumbnailSidebarVisible = true
     @Environment(\.colorScheme) private var systemColorScheme
 
     private var pdfDarkMode: Bool {
@@ -98,6 +99,20 @@ struct LibraryDetailView: View {
             }
             ToolbarItem(placement: .primaryAction) {
                 Button {
+                    thumbnailSidebarVisible.toggle()
+                } label: {
+                    Label(
+                        thumbnailSidebarVisible ? "Hide Thumbnails" : "Show Thumbnails",
+                        systemImage: "sidebar.right"
+                    )
+                }
+                .help(thumbnailSidebarVisible
+                      ? "Hide PDF page thumbnails"
+                      : "Show PDF page thumbnails")
+                .disabled(openablePDFURL == nil)
+            }
+            ToolbarItem(placement: .primaryAction) {
+                Button {
                     ExternalPDFOpener.system.open(openablePDFURL)
                 } label: {
                     Label("Open PDF", systemImage: "arrow.up.right.square")
@@ -139,7 +154,11 @@ struct LibraryDetailView: View {
     private func pdfPane(for record: LibraryRecord) -> some View {
         if let url = pdfURL(for: record) {
             if FileManager.default.fileExists(atPath: url.path) {
-                PDFViewer(url: url, darkMode: pdfDarkMode)
+                PDFViewer(
+                    url: url,
+                    darkMode: pdfDarkMode,
+                    thumbnailSidebarVisible: thumbnailSidebarVisible
+                )
             } else {
                 ContentUnavailableView {
                     Label("PDF not downloaded", systemImage: "icloud.and.arrow.down")

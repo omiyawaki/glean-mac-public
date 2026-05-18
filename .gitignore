@@ -4,5 +4,6 @@ Package.resolved
 *.xcodeproj
 DerivedData/
 dist/
+build/visual-qa/
 .DS_Store
 glean.app/
