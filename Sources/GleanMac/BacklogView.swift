@@ -52,10 +52,14 @@ struct BacklogView: View {
                 actionQueue.enqueue(
                     title: "Attach PDF",
                     detail: url.lastPathComponent,
-                    systemImage: "doc.richtext"
-                ) {
-                    try await IntakeActions.attach(file: url)
-                }
+                    systemImage: "doc.richtext",
+                    operation: {
+                        try await IntakeActions.attach(file: url)
+                    },
+                    forceAttach: { citekey in
+                        try await IntakeActions.attach(file: url, citekey: citekey)
+                    }
+                )
             }
             return !pdfs.isEmpty
         }

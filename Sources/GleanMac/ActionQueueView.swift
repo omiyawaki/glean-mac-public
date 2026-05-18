@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ActionQueueButton: View {
     @Bindable var queue: ActionQueueStore
+    var backlogStore: BacklogStore? = nil
 
     var body: some View {
         Button {
@@ -24,7 +25,7 @@ struct ActionQueueButton: View {
         }
         .help("Activity")
         .popover(isPresented: $queue.isPresented, arrowEdge: .bottom) {
-            ActionQueuePopover(queue: queue)
+            ActionQueuePopover(queue: queue, backlogStore: backlogStore)
                 .frame(width: 380, height: 420)
         }
     }
@@ -47,6 +48,7 @@ struct ActionQueueButton: View {
 
 private struct ActionQueuePopover: View {
     @Bindable var queue: ActionQueueStore
+    var backlogStore: BacklogStore?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -57,9 +59,10 @@ private struct ActionQueuePopover: View {
                 Button {
                     queue.clearFinished()
                 } label: {
-                    Label("Clear Finished", systemImage: "checkmark.circle")
+                    Image(systemName: "checkmark.circle")
+                        .actionQueueIconStyle()
                 }
-                .labelStyle(.iconOnly)
+                .buttonStyle(.borderless)
                 .help("Clear finished")
                 .disabled(!queue.hasFinishedEntries)
             }
@@ -75,9 +78,16 @@ private struct ActionQueuePopover: View {
                 )
             } else {
                 List(queue.entries) { entry in
-                    ActionQueueRow(entry: entry,
-                                   retry: { queue.retry(entry.id) },
-                                   remove: { queue.remove(entry.id) })
+                    ActionQueueRow(
+                        entry: entry,
+                        backlogEntries: backlogStore?.entries ?? [],
+                        canForceAttach: queue.canForceAttach(entry.id),
+                        retry: { queue.retry(entry.id) },
+                        remove: { queue.remove(entry.id) },
+                        forceAttach: { citekey in
+                            queue.forceAttach(entry.id, citekey: citekey)
+                        }
+                    )
                 }
                 .listStyle(.plain)
             }
@@ -87,8 +97,11 @@ private struct ActionQueuePopover: View {
 
 private struct ActionQueueRow: View {
     let entry: ActionQueueStore.Entry
+    let backlogEntries: [BacklogEntry]
+    let canForceAttach: Bool
     let retry: () -> Void
     let remove: () -> Void
+    let forceAttach: (String) -> Void
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
@@ -114,22 +127,43 @@ private struct ActionQueueRow: View {
 
             Spacer(minLength: 8)
 
+            if entry.status == .failed && canForceAttach && !backlogEntries.isEmpty {
+                Menu {
+                    Section("Attach to backlog entry") {
+                        ForEach(backlogEntries) { backlogEntry in
+                            Button {
+                                forceAttach(backlogEntry.citekey)
+                            } label: {
+                                Text(backlogEntry.title)
+                            }
+                        }
+                    }
+                } label: {
+                    Image(systemName: "link.badge.plus")
+                        .actionQueueIconStyle()
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help("Attach anyway to a backlog entry")
+            }
+
             if entry.status == .failed {
                 Button(action: retry) {
-                    Label("Retry", systemImage: "arrow.clockwise")
+                    Image(systemName: "arrow.clockwise")
+                        .actionQueueIconStyle()
                 }
-                .labelStyle(.iconOnly)
-                .help("Retry")
                 .buttonStyle(.borderless)
+                .help("Retry")
             }
 
             if entry.status.isFinished {
                 Button(action: remove) {
-                    Label("Remove", systemImage: "xmark")
+                    Image(systemName: "xmark")
+                        .actionQueueIconStyle()
                 }
-                .labelStyle(.iconOnly)
-                .help("Remove")
                 .buttonStyle(.borderless)
+                .help("Remove")
             }
         }
         .padding(.vertical, 5)
@@ -169,5 +203,23 @@ private struct ActionQueueRow: View {
         case .succeeded: .secondary
         case .queued, .running: .secondary
         }
+    }
+}
+
+private extension View {
+    /// Standardize the look of the iconOnly buttons in the Activity
+    /// popover. Without this, `arrow.clockwise` reads heavier than
+    /// `xmark` at the default body size (different stroke densities)
+    /// and the two glyphs sit on slightly different baselines because
+    /// Label(...).iconOnly still allocates space for the hidden title
+    /// text. Using Image(systemName:) + a fixed frame at .imageScale
+    /// .medium pins both the glyph metrics and the click target.
+    func actionQueueIconStyle() -> some View {
+        self
+            .font(.system(size: 14, weight: .regular))
+            .imageScale(.medium)
+            .symbolRenderingMode(.monochrome)
+            .frame(width: 18, height: 18)
+            .contentShape(Rectangle())
     }
 }

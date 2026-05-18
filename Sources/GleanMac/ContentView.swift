@@ -71,7 +71,7 @@ struct ContentView: View {
             // boxed-in next to the other toolbar items.
             LocalAppUpdateToolbarItem(controller: updateController)
             ToolbarItem(placement: .primaryAction) {
-                ActionQueueButton(queue: actionQueue)
+                ActionQueueButton(queue: actionQueue, backlogStore: backlogStore)
             }
         }
         .task {

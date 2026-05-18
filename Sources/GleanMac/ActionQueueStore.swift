@@ -36,6 +36,16 @@ final class ActionQueueStore {
     @ObservationIgnored
     private var operations: [UUID: @MainActor @Sendable () async throws -> Void] = [:]
 
+    /// Optional "force-attach to citekey" follow-up registered alongside
+    /// the operation. Populated only for attach operations whose caller
+    /// can re-fire the upload with an explicit citekey override (the
+    /// /attach endpoint's `citekey` form field, which bypasses DOI
+    /// extraction entirely). Used for PDFs that ship without a printed
+    /// DOI — Stone 1973 and other pre-DOI papers — where the user
+    /// manually verifies which backlog entry the PDF belongs to.
+    @ObservationIgnored
+    private var forceAttachOps: [UUID: @MainActor @Sendable (String) async throws -> Void] = [:]
+
     var activeCount: Int {
         entries.filter { !$0.status.isFinished }.count
     }
@@ -52,9 +62,13 @@ final class ActionQueueStore {
     func enqueue(title: String,
                  detail: String = "",
                  systemImage: String,
-                 operation: @escaping @MainActor @Sendable () async throws -> Void) -> UUID {
+                 operation: @escaping @MainActor @Sendable () async throws -> Void,
+                 forceAttach: (@MainActor @Sendable (String) async throws -> Void)? = nil) -> UUID {
         let id = UUID()
         operations[id] = operation
+        if let forceAttach {
+            forceAttachOps[id] = forceAttach
+        }
         let entry = Entry(
             id: id,
             title: title,
@@ -80,8 +94,32 @@ final class ActionQueueStore {
         start(id)
     }
 
+    /// True if this entry has a registered force-attach follow-up. The
+    /// row uses this to decide whether to surface the "attach anyway"
+    /// menu alongside the standard retry/remove buttons.
+    func canForceAttach(_ id: UUID) -> Bool {
+        forceAttachOps[id] != nil
+    }
+
+    /// Re-run this entry's attach with an explicit citekey, bypassing
+    /// the server's DOI extraction. Only valid while the entry is in a
+    /// failed state and a forceAttach closure was registered at enqueue
+    /// time. Reuses the same status-progression machinery as retry.
+    func forceAttach(_ id: UUID, citekey: String) {
+        guard let op = forceAttachOps[id],
+              let index = entries.firstIndex(where: { $0.id == id }),
+              entries[index].status == .failed else { return }
+        entries[index].status = .queued
+        entries[index].errorMessage = nil
+        entries[index].completedAt = nil
+        Task { [weak self] in
+            await self?.run(id: id, operation: { try await op(citekey) })
+        }
+    }
+
     func remove(_ id: UUID) {
         operations[id] = nil
+        forceAttachOps[id] = nil
         withAnimation(.smooth) {
             entries.removeAll { $0.id == id }
         }
@@ -91,6 +129,7 @@ final class ActionQueueStore {
         let finished = Set(entries.filter { $0.status.isFinished }.map(\.id))
         for id in finished {
             operations[id] = nil
+            forceAttachOps[id] = nil
         }
         withAnimation(.smooth) {
             entries.removeAll { finished.contains($0.id) }
