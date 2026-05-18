@@ -60,9 +60,11 @@ struct BacklogView: View {
                     systemImage: "doc.richtext",
                     operation: {
                         try await IntakeActions.attach(file: url)
+                        trashSourcePDF(url)
                     },
                     forceAttach: { citekey in
                         try await IntakeActions.attach(file: url, citekey: citekey)
+                        trashSourcePDF(url)
                     }
                 )
             }
@@ -93,13 +95,31 @@ struct BacklogView: View {
                 systemImage: "doc.richtext",
                 operation: {
                     try await IntakeActions.attach(file: url, citekey: citekey)
+                    trashSourcePDF(url)
                 },
                 forceAttach: { altCitekey in
                     try await IntakeActions.attach(file: url, citekey: altCitekey)
+                    trashSourcePDF(url)
                 }
             )
         }
     }
+}
+
+/// Move a successfully-attached source PDF to the user's Trash. The
+/// PDF lives in the glean library now, so the original copy under
+/// ~/Downloads (or wherever the drop came from) is duplicate state.
+/// Trash rather than unlink so the user has a recovery path if the
+/// attach turns out to be the wrong entry: the file is fishable out
+/// of Finder until they empty Trash.
+///
+/// Best-effort — non-file URLs, read-only volumes, or already-deleted
+/// paths fail silently. The attach itself already succeeded; surfacing
+/// a trash failure would just confuse the user.
+@MainActor
+private func trashSourcePDF(_ url: URL) {
+    guard url.isFileURL else { return }
+    try? FileManager.default.trashItem(at: url, resultingItemURL: nil)
 }
 
 private struct BacklogRow: View {
