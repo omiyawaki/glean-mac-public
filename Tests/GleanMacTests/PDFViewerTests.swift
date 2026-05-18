@@ -90,4 +90,19 @@ final class PDFViewerTests: XCTestCase {
         XCTAssertEqual(view.pdfView.backgroundColor, color)
         XCTAssertEqual(view.thumbnailView.backgroundColor, color)
     }
+
+    @MainActor
+    func testThumbnailSplitViewAppliesAndClearsDarkThumbnailFilter() {
+        let view = PDFThumbnailSplitView(configuration: .previewLike)
+
+        view.setThumbnailDarkMode(true)
+
+        XCTAssertTrue(view.thumbnailView.wantsLayer)
+        XCTAssertEqual(view.thumbnailView.backgroundColor, .white)
+        XCTAssertEqual(view.thumbnailView.layer?.filters?.count, 1)
+
+        view.setThumbnailDarkMode(false)
+
+        XCTAssertNil(view.thumbnailView.layer?.filters)
+    }
 }

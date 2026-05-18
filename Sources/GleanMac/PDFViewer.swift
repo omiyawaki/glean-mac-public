@@ -1,6 +1,7 @@
 import SwiftUI
 import PDFKit
 import AppKit
+import CoreImage
 
 struct PDFThumbnailSidebarConfiguration: Equatable {
     var defaultWidth: CGFloat
@@ -77,6 +78,7 @@ struct PDFViewer: NSViewRepresentable {
         nsView.setPDFBackgroundColor(
             darkMode ? PDFDarkModePalette.pageBackgroundColor : .clear
         )
+        nsView.setThumbnailDarkMode(darkMode)
     }
 
     final class Coordinator: NSObject, PDFDocumentDelegate {
@@ -141,6 +143,17 @@ final class PDFThumbnailSplitView: NSView, NSSplitViewDelegate {
     func setPDFBackgroundColor(_ color: NSColor) {
         pdfView.backgroundColor = color
         thumbnailView.backgroundColor = color
+    }
+
+    func setThumbnailDarkMode(_ enabled: Bool) {
+        thumbnailView.wantsLayer = true
+        guard enabled else {
+            thumbnailView.layer?.filters = nil
+            return
+        }
+
+        thumbnailView.backgroundColor = .white
+        thumbnailView.layer?.filters = [PDFDarkModePalette.thumbnailInversionFilter]
     }
 
     func splitView(
@@ -284,6 +297,19 @@ enum PDFDarkModePalette {
             .usingColorSpace(NSColorSpace.deviceRGB)
             ?? NSColor(white: fallbackPageBackgroundLevel, alpha: 1.0)
         return (color.redComponent + color.greenComponent + color.blueComponent) / 3.0
+    }
+
+    static var thumbnailInversionFilter: CIFilter {
+        let low = pageBackgroundLevel
+        let high = 1.0 - low
+        let scale = high - low
+        let filter = CIFilter(name: "CIColorMatrix")!
+        filter.setValue(CIVector(x: -scale, y: 0, z: 0, w: 0), forKey: "inputRVector")
+        filter.setValue(CIVector(x: 0, y: -scale, z: 0, w: 0), forKey: "inputGVector")
+        filter.setValue(CIVector(x: 0, y: 0, z: -scale, w: 0), forKey: "inputBVector")
+        filter.setValue(CIVector(x: 0, y: 0, z: 0, w: 1), forKey: "inputAVector")
+        filter.setValue(CIVector(x: high, y: high, z: high, w: 0), forKey: "inputBiasVector")
+        return filter
     }
 
     private static func resolvedDarkAquaColor(
