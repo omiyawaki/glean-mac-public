@@ -2,6 +2,20 @@ import SwiftUI
 import PDFKit
 import AppKit
 
+struct PDFThumbnailSidebarConfiguration: Equatable {
+    var defaultWidth: CGFloat
+    var minimumWidth: CGFloat
+    var maximumWidth: CGFloat
+    var thumbnailSize: CGSize
+
+    static let previewLike = PDFThumbnailSidebarConfiguration(
+        defaultWidth: 160,
+        minimumWidth: 120,
+        maximumWidth: 260,
+        thumbnailSize: CGSize(width: 96, height: 128)
+    )
+}
+
 /// PDFKit's PDFView wrapped for SwiftUI. Single-page-continuous, autoscales
 /// to width — matches Preview.app's default reading layout. The view diffs
 /// the document URL on update so swapping rows doesn't tear down the view.
