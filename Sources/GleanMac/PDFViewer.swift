@@ -274,6 +274,53 @@ final class InvertedPDFPage: PDFPage {
         context.fill(bounds(for: box))
         context.restoreGState()
     }
+
+    override func thumbnail(of size: CGSize, for box: PDFDisplayBox) -> NSImage {
+        let pixelWidth = max(1, Int(ceil(size.width)))
+        let pixelHeight = max(1, Int(ceil(size.height)))
+        let pageBounds = bounds(for: box)
+        guard pageBounds.width > 0, pageBounds.height > 0 else {
+            return super.thumbnail(of: size, for: box)
+        }
+
+        let scale = min(
+            CGFloat(pixelWidth) / pageBounds.width,
+            CGFloat(pixelHeight) / pageBounds.height
+        )
+        let scaledSize = CGSize(
+            width: pageBounds.width * scale,
+            height: pageBounds.height * scale
+        )
+        let drawOrigin = CGPoint(
+            x: (CGFloat(pixelWidth) - scaledSize.width) / 2,
+            y: (CGFloat(pixelHeight) - scaledSize.height) / 2
+        )
+        let bitmapInfo = CGImageAlphaInfo.premultipliedLast.rawValue
+        guard let context = CGContext(
+            data: nil,
+            width: pixelWidth,
+            height: pixelHeight,
+            bitsPerComponent: 8,
+            bytesPerRow: pixelWidth * 4,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: bitmapInfo
+        ) else {
+            return super.thumbnail(of: size, for: box)
+        }
+
+        context.clear(CGRect(x: 0, y: 0, width: pixelWidth, height: pixelHeight))
+        context.saveGState()
+        context.translateBy(x: drawOrigin.x, y: drawOrigin.y)
+        context.scaleBy(x: scale, y: scale)
+        context.translateBy(x: -pageBounds.minX, y: -pageBounds.minY)
+        draw(with: box, to: context)
+        context.restoreGState()
+
+        guard let image = context.makeImage() else {
+            return super.thumbnail(of: size, for: box)
+        }
+        return NSImage(cgImage: image, size: size)
+    }
 }
 
 enum PDFDarkModePalette {
