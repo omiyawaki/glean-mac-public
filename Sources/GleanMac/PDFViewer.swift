@@ -58,6 +58,7 @@ struct PDFViewer: NSViewRepresentable {
 
         if urlChanged || modeChanged {
             let savedDest = pdfView.currentDestination
+            nsView.setThumbnailDarkMode(darkMode, reloadThumbnails: false)
             if let url {
                 let doc = PDFDocument(url: url)
                 doc?.delegate = coord
@@ -100,6 +101,7 @@ final class PDFThumbnailSplitView: NSView, NSSplitViewDelegate {
     private let thumbnailBackgroundView = NSVisualEffectView()
     private let configuration: PDFThumbnailSidebarConfiguration
     private var didApplyInitialThumbnailWidth = false
+    private var thumbnailDarkMode: Bool?
 
     private(set) var isThumbnailSidebarVisible = true
 
@@ -144,10 +146,14 @@ final class PDFThumbnailSplitView: NSView, NSSplitViewDelegate {
         pdfView.backgroundColor = color
     }
 
-    func setThumbnailDarkMode(_: Bool) {
+    func setThumbnailDarkMode(_ darkMode: Bool, reloadThumbnails: Bool = true) {
+        let changed = thumbnailDarkMode != darkMode
+        thumbnailDarkMode = darkMode
         thumbnailView.layer?.filters = nil
         thumbnailView.backgroundColor = .clear
-        thumbnailView.reloadThumbnails()
+        if changed && reloadThumbnails {
+            thumbnailView.reloadThumbnails()
+        }
     }
 
     func splitView(
@@ -246,6 +252,7 @@ final class PDFThumbnailSplitView: NSView, NSSplitViewDelegate {
 @MainActor
 final class PDFThumbnailSidebarView: NSScrollView {
     static let sidebarHorizontalMargin: CGFloat = 64
+    static let initialSynchronousRenderCount = 1
 
     weak var pdfView: PDFView? {
         didSet {
@@ -280,6 +287,7 @@ final class PDFThumbnailSidebarView: NSScrollView {
     private let stackView = NSStackView()
     private var lastDisplayedThumbnailWidth: CGFloat = 0
     private var lastRenderedThumbnailWidth: CGFloat = 0
+    private var nextDeferredRenderIndex: Int?
 
     override func layout() {
         super.layout()
@@ -303,6 +311,7 @@ final class PDFThumbnailSidebarView: NSScrollView {
 
     func reloadThumbnails() {
         NSObject.cancelPreviousPerformRequests(withTarget: self)
+        nextDeferredRenderIndex = nil
         thumbnailItems.forEach { $0.removeFromSuperview() }
         thumbnailItems.removeAll()
 
@@ -321,7 +330,8 @@ final class PDFThumbnailSidebarView: NSScrollView {
                 page: page,
                 pageIndex: index,
                 thumbnailSize: thumbnailDisplaySize(for: page, width: thumbnailWidth),
-                renderScale: renderScale
+                renderScale: renderScale,
+                renderImmediately: index < Self.initialSynchronousRenderCount
             )
             item.target = self
             item.action = #selector(selectThumbnail(_:))
@@ -329,6 +339,7 @@ final class PDFThumbnailSidebarView: NSScrollView {
             stackView.addArrangedSubview(item)
         }
         updateSelection()
+        scheduleDeferredRemainingThumbnailRender(startingAt: Self.initialSynchronousRenderCount)
     }
 
     @objc
@@ -426,6 +437,44 @@ final class PDFThumbnailSidebarView: NSScrollView {
         )
     }
 
+    private func scheduleDeferredRemainingThumbnailRender(startingAt index: Int) {
+        guard index < thumbnailItems.count else { return }
+        nextDeferredRenderIndex = index
+        NSObject.cancelPreviousPerformRequests(
+            withTarget: self,
+            selector: #selector(deferredRenderNextThumbnail),
+            object: nil
+        )
+        perform(
+            #selector(deferredRenderNextThumbnail),
+            with: nil,
+            afterDelay: 0.03
+        )
+    }
+
+    @objc
+    private func deferredRenderNextThumbnail() {
+        guard let index = nextDeferredRenderIndex,
+              index < thumbnailItems.count,
+              pdfView?.document != nil
+        else {
+            nextDeferredRenderIndex = nil
+            return
+        }
+        thumbnailItems[index].rerenderThumbnail(renderScale: currentRenderScale())
+        let nextIndex = index + 1
+        nextDeferredRenderIndex = nextIndex
+        guard nextIndex < thumbnailItems.count else {
+            nextDeferredRenderIndex = nil
+            return
+        }
+        perform(
+            #selector(deferredRenderNextThumbnail),
+            with: nil,
+            afterDelay: 0.03
+        )
+    }
+
     @objc
     private func deferredRerenderThumbnails() {
         guard pdfView?.document != nil else { return }
@@ -486,7 +535,13 @@ final class PDFThumbnailItemView: NSControl {
     private var imageWidthConstraint: NSLayoutConstraint?
     private var imageHeightConstraint: NSLayoutConstraint?
 
-    init(page: PDFPage, pageIndex: Int, thumbnailSize: CGSize, renderScale: CGFloat = 2) {
+    init(
+        page: PDFPage,
+        pageIndex: Int,
+        thumbnailSize: CGSize,
+        renderScale: CGFloat = 2,
+        renderImmediately: Bool = true
+    ) {
         self.page = page
         self.pageIndex = pageIndex
         self.thumbnailSize = thumbnailSize
@@ -496,7 +551,11 @@ final class PDFThumbnailItemView: NSControl {
             width: thumbnailSize.width + 32,
             height: thumbnailSize.height + 28
         ))
-        configureViews(thumbnailSize: thumbnailSize, renderScale: renderScale)
+        configureViews(
+            thumbnailSize: thumbnailSize,
+            renderScale: renderScale,
+            renderImmediately: renderImmediately
+        )
     }
 
     @available(*, unavailable)
@@ -529,12 +588,18 @@ final class PDFThumbnailItemView: NSControl {
         imageView.image = renderedThumbnail(renderScale: renderScale)
     }
 
-    private func configureViews(thumbnailSize: CGSize, renderScale: CGFloat) {
+    private func configureViews(
+        thumbnailSize: CGSize,
+        renderScale: CGFloat,
+        renderImmediately: Bool
+    ) {
         translatesAutoresizingMaskIntoConstraints = false
         imageView.translatesAutoresizingMaskIntoConstraints = false
         label.translatesAutoresizingMaskIntoConstraints = false
 
-        imageView.image = renderedThumbnail(renderScale: renderScale)
+        imageView.image = renderImmediately
+            ? renderedThumbnail(renderScale: renderScale)
+            : placeholderThumbnail(size: thumbnailSize)
         imageView.imageAlignment = .alignCenter
         imageView.imageScaling = .scaleProportionallyUpOrDown
         imageView.wantsLayer = true
@@ -573,6 +638,15 @@ final class PDFThumbnailItemView: NSControl {
             label.trailingAnchor.constraint(equalTo: trailingAnchor),
             label.topAnchor.constraint(equalTo: imageView.bottomAnchor, constant: 6)
         ])
+    }
+
+    private func placeholderThumbnail(size: CGSize) -> NSImage {
+        let image = NSImage(size: size)
+        image.lockFocus()
+        NSColor.textBackgroundColor.setFill()
+        NSRect(origin: .zero, size: size).fill()
+        image.unlockFocus()
+        return image
     }
 
     private func renderedThumbnail(renderScale: CGFloat) -> NSImage {

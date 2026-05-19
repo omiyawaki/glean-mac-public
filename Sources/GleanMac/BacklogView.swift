@@ -6,9 +6,6 @@ struct BacklogView: View {
     let offlineCoordinator: OfflineIntakeCoordinator
     let syncPendingOperations: () async -> Void
     @Binding var selection: String?
-    @State private var now = Date()
-
-    private let ticker = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
 
     var body: some View {
         Group {
@@ -40,19 +37,9 @@ struct BacklogView: View {
                 }
             }
         }
-        .navigationTitle("Backlog")
-        .navigationSubtitle(subtitle)
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                RefreshButton(isLoading: store.isLoading) {
-                    await store.load()
-                }
-            }
-        }
         .task {
             if !store.hasLoadedOnce { await store.load() }
         }
-        .onReceive(ticker) { now = $0 }
         .dropDestination(for: URL.self) { urls, _ in
             let pdfs = urls.filter { $0.pathExtension.lowercased() == "pdf" }
             for url in pdfs {
@@ -74,15 +61,6 @@ struct BacklogView: View {
             }
             return !pdfs.isEmpty
         }
-    }
-
-    private var subtitle: String {
-        guard store.hasLoadedOnce else { return "" }
-        let countPart = store.count == 1
-            ? "1 paper awaiting PDF"
-            : "\(store.count) papers awaiting PDFs"
-        guard let when = store.lastRefreshedAt else { return countPart }
-        return "\(countPart) • \(relativeUpdated(from: when, to: now))"
     }
 
     /// Drop-on-row force-attach. Skips the server's DOI extraction by

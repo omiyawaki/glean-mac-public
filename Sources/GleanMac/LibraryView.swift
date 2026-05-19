@@ -1,13 +1,14 @@
 import SwiftUI
 
+enum LibraryRowLayout {
+    static let rowHeight: CGFloat = 52
+}
+
 struct LibraryView: View {
     let store: LibraryStore
     let listState: LibraryListState
     @Binding var selection: String?
     @Binding var query: String
-    @State private var now = Date()
-
-    private let ticker = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
 
     var body: some View {
         Group {
@@ -35,15 +36,7 @@ struct LibraryView: View {
                     }
                 }
                 .animation(nil, value: listState.grouped)
-            }
-        }
-        .navigationTitle("All Papers")
-        .navigationSubtitle(subtitle)
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                RefreshButton(isLoading: store.isLoading) {
-                    await store.load()
-                }
+                .environment(\.defaultMinListRowHeight, LibraryRowLayout.rowHeight)
             }
         }
         .task {
@@ -55,7 +48,6 @@ struct LibraryView: View {
         .task(id: store.entries.count) {
             recomputeGroups()
         }
-        .onReceive(ticker) { now = $0 }
     }
 
     /// Recompute filter + year grouping into @State so the List sees a
@@ -63,20 +55,6 @@ struct LibraryView: View {
     /// in LibraryFilter (covered by tests).
     private func recomputeGroups() {
         listState.update(entries: store.entries, query: query)
-    }
-
-    private var subtitle: String {
-        guard store.hasLoadedOnce else { return "" }
-        let total = store.count
-        let visible = listState.visibleCount
-        let countPart: String
-        if visible == total {
-            countPart = total == 1 ? "1 paper" : "\(total) papers"
-        } else {
-            countPart = "\(visible) of \(total) papers"
-        }
-        guard let when = store.lastRefreshedAt else { return countPart }
-        return "\(countPart) • \(relativeUpdated(from: when, to: now))"
     }
 }
 
@@ -94,6 +72,7 @@ private struct LibraryRow: View {
                 .lineLimit(1)
         }
         .padding(.vertical, 2)
+        .frame(height: LibraryRowLayout.rowHeight, alignment: .center)
     }
 
     private var authorLine: String {

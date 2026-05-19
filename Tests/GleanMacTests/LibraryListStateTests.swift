@@ -63,6 +63,10 @@ final class LibraryListStateTests: XCTestCase {
         XCTAssertEqual(state.grouped.map(\.year), [2026])
     }
 
+    func testLibraryRowsUseFixedHeightForFastListRealization() {
+        XCTAssertEqual(LibraryRowLayout.rowHeight, 52)
+    }
+
     private func makeEntry(
         citekey: String,
         title: String,

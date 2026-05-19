@@ -222,9 +222,64 @@ final class PDFViewerTests: XCTestCase {
         }
     }
 
+    @MainActor
+    func testThumbnailSidebarDoesNotRenderEveryPageSynchronouslyOnInitialLoad() throws {
+        CountingPDFPage.drawCount = 0
+        let url = try makeMultipageImplicitBackgroundPDF(pageCount: 12)
+        let delegate = CountingPageDelegate()
+        let document = try XCTUnwrap(PDFDocument(url: url))
+        document.delegate = delegate
+        let view = PDFThumbnailSplitView(configuration: .previewLike)
+        view.frame = NSRect(x: 0, y: 0, width: 800, height: 500)
+
+        view.setDocument(document)
+        view.layoutSubtreeIfNeeded()
+
+        XCTAssertEqual(view.thumbnailView.thumbnailItems.count, 12)
+        XCTAssertLessThan(
+            CountingPDFPage.drawCount,
+            12,
+            "Initial sidebar load should render only an immediate visible budget, then defer the rest so sidebar switches stay fast."
+        )
+    }
+
+    @MainActor
+    func testThumbnailSplitViewDoesNotReloadThumbnailsWhenDarkModeIsUnchanged() throws {
+        let url = try makeMultipageImplicitBackgroundPDF(pageCount: 3)
+        let document = try XCTUnwrap(PDFDocument(url: url))
+        let view = PDFThumbnailSplitView(configuration: .previewLike)
+        view.frame = NSRect(x: 0, y: 0, width: 800, height: 500)
+
+        view.setDocument(document)
+        view.setThumbnailDarkMode(false)
+        let originalItems = view.thumbnailView.thumbnailItems
+
+        view.setThumbnailDarkMode(false)
+
+        XCTAssertEqual(view.thumbnailView.thumbnailItems.count, originalItems.count)
+        for (index, item) in view.thumbnailView.thumbnailItems.enumerated() {
+            XCTAssertIdentical(item, originalItems[index])
+        }
+    }
+
     private final class DarkPageDelegate: NSObject, PDFDocumentDelegate {
         func classForPage() -> AnyClass {
             InvertedPDFPage.self
+        }
+    }
+
+    private final class CountingPageDelegate: NSObject, PDFDocumentDelegate {
+        func classForPage() -> AnyClass {
+            CountingPDFPage.self
+        }
+    }
+
+    private final class CountingPDFPage: PDFPage {
+        nonisolated(unsafe) static var drawCount = 0
+
+        override func draw(with box: PDFDisplayBox, to context: CGContext) {
+            Self.drawCount += 1
+            super.draw(with: box, to: context)
         }
     }
 

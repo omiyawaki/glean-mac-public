@@ -5,9 +5,6 @@ struct MaybeReviewView: View {
     let actionQueue: ActionQueueStore
     let offlineCoordinator: OfflineIntakeCoordinator
     let syncPendingOperations: () async -> Void
-    @State private var now = Date()
-
-    private let ticker = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
 
     var body: some View {
         Group {
@@ -40,19 +37,9 @@ struct MaybeReviewView: View {
                 }
             }
         }
-        .navigationTitle("Maybe Review")
-        .navigationSubtitle(subtitle)
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                RefreshButton(isLoading: store.isLoading) {
-                    await store.load()
-                }
-            }
-        }
         .task {
             if !store.hasLoadedOnce { await store.load() }
         }
-        .onReceive(ticker) { now = $0 }
     }
 
     private enum Kind {
@@ -94,14 +81,6 @@ struct MaybeReviewView: View {
         }
     }
 
-    private var subtitle: String {
-        guard store.hasLoadedOnce else { return "" }
-        let countPart = store.count == 1
-            ? "1 paper to review"
-            : "\(store.count) papers to review"
-        guard let when = store.lastRefreshedAt else { return countPart }
-        return "\(countPart) • \(relativeUpdated(from: when, to: now))"
-    }
 }
 
 private struct ReviewRow: View {

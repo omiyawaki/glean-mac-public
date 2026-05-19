@@ -36,6 +36,8 @@ struct ContentView: View {
     @State private var librarySelection: String?
     @State private var libraryQuery = ""
     @State private var inspectorPresented = false
+    @State private var mountedSidebarItems = MountedSidebarItems(initial: .backlog)
+    @State private var now = Date()
 
     @State private var backlogStore = Stores.backlog()
     @State private var reviewStore = Stores.review()
@@ -51,6 +53,7 @@ struct ContentView: View {
     private static let eventsURL = URL(
         string: "http://backend.example.com:8765/events"
     )!
+    private let ticker = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
 
     var body: some View {
         NavigationSplitView {
@@ -113,6 +116,10 @@ struct ContentView: View {
 
             registerIntrospection()
         }
+        .onChange(of: selection) { _, newSelection in
+            mountedSidebarItems.select(newSelection)
+        }
+        .onReceive(ticker) { now = $0 }
     }
 
     private func registerIntrospection() {
@@ -216,34 +223,134 @@ struct ContentView: View {
 
     @ViewBuilder
     private var content: some View {
-        switch selection {
-        case .libraryAll:
-            LibraryView(store: libraryStore,
-                        listState: libraryListState,
-                        selection: $librarySelection,
-                        query: $libraryQuery)
-        case .backlog:
-            BacklogView(store: backlogStore,
-                        actionQueue: actionQueue,
-                        offlineCoordinator: offlineCoordinator,
-                        syncPendingOperations: syncPendingOperations,
-                        selection: $backlogSelection)
-        case .maybeReview:
-            MaybeReviewView(store: reviewStore,
+        ZStack {
+            if selection == nil {
+                ContentUnavailableView(
+                    "Select a section",
+                    systemImage: "sidebar.left"
+                )
+            }
+            if shouldMount(.libraryAll) {
+                LibraryView(store: libraryStore,
+                            listState: libraryListState,
+                            selection: $librarySelection,
+                            query: $libraryQuery)
+                    .sidebarPane(.libraryAll, selection: selection)
+            }
+            if shouldMount(.backlog) {
+                BacklogView(store: backlogStore,
                             actionQueue: actionQueue,
                             offlineCoordinator: offlineCoordinator,
-                            syncPendingOperations: syncPendingOperations)
-        case .authorProposals:
-            AuthorProposalsView(store: authorStore,
+                            syncPendingOperations: syncPendingOperations,
+                            selection: $backlogSelection)
+                    .sidebarPane(.backlog, selection: selection)
+            }
+            if shouldMount(.maybeReview) {
+                MaybeReviewView(store: reviewStore,
                                 actionQueue: actionQueue,
                                 offlineCoordinator: offlineCoordinator,
                                 syncPendingOperations: syncPendingOperations)
-        case .none:
-            ContentUnavailableView(
-                "Select a section",
-                systemImage: "sidebar.left"
-            )
+                    .sidebarPane(.maybeReview, selection: selection)
+            }
+            if shouldMount(.authorProposals) {
+                AuthorProposalsView(store: authorStore,
+                                    actionQueue: actionQueue,
+                                    offlineCoordinator: offlineCoordinator,
+                                    syncPendingOperations: syncPendingOperations)
+                    .sidebarPane(.authorProposals, selection: selection)
+            }
         }
+        .transaction { transaction in
+            transaction.animation = SidebarPaneVisibility.selectionAnimation
+        }
+        .navigationTitle(contentTitle)
+        .navigationSubtitle(contentSubtitle)
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                RefreshButton(isLoading: contentRefreshIsLoading) {
+                    await refreshSelectedContent()
+                }
+                .disabled(!contentRefreshIsAvailable)
+            }
+        }
+    }
+
+    private var contentRefreshIsAvailable: Bool {
+        SidebarContentChrome.isRefreshAvailable(for: selection)
+    }
+
+    private var contentRefreshIsLoading: Bool {
+        switch selection {
+        case .libraryAll:
+            libraryStore.isLoading
+        case .backlog:
+            backlogStore.isLoading
+        case .maybeReview:
+            reviewStore.isLoading
+        case .authorProposals:
+            authorStore.isLoading
+        case .none:
+            false
+        }
+    }
+
+    private func refreshSelectedContent() async {
+        switch selection {
+        case .libraryAll:
+            await libraryStore.load()
+        case .backlog:
+            await backlogStore.load()
+        case .maybeReview:
+            await reviewStore.load()
+        case .authorProposals:
+            await authorStore.load()
+        case .none:
+            break
+        }
+    }
+
+    private var contentTitle: String {
+        SidebarContentChrome.title(for: selection)
+    }
+
+    private var contentSubtitle: String {
+        switch selection {
+        case .libraryAll:
+            SidebarContentChrome.librarySubtitle(
+                hasLoadedOnce: libraryStore.hasLoadedOnce,
+                totalCount: libraryStore.count,
+                visibleCount: libraryListState.visibleCount,
+                lastRefreshedAt: libraryStore.lastRefreshedAt,
+                now: now
+            )
+        case .backlog:
+            SidebarContentChrome.backlogSubtitle(
+                hasLoadedOnce: backlogStore.hasLoadedOnce,
+                count: backlogStore.count,
+                lastRefreshedAt: backlogStore.lastRefreshedAt,
+                now: now
+            )
+        case .maybeReview:
+            SidebarContentChrome.maybeReviewSubtitle(
+                hasLoadedOnce: reviewStore.hasLoadedOnce,
+                count: reviewStore.count,
+                lastRefreshedAt: reviewStore.lastRefreshedAt,
+                now: now
+            )
+        case .authorProposals:
+            SidebarContentChrome.authorProposalsSubtitle(
+                hasLoadedOnce: authorStore.hasLoadedOnce,
+                count: authorStore.count,
+                lastRefreshedAt: authorStore.lastRefreshedAt,
+                now: now
+            )
+        case .none:
+            ""
+        }
+    }
+
+    private func shouldMount(_ item: SidebarItem) -> Bool {
+        mountedSidebarItems.contains(item) || selection == item
     }
 
     @ViewBuilder
@@ -299,5 +406,20 @@ struct ContentView: View {
 
     private func syncPendingOperations() async {
         await syncWorker?.syncPending()
+    }
+}
+
+private extension View {
+    func sidebarPane(_ item: SidebarItem, selection: SidebarItem?) -> some View {
+        let interactive = SidebarPaneVisibility.allowsHitTesting(
+            for: item,
+            selection: selection
+        )
+        return opacity(SidebarPaneVisibility.opacity(for: item, selection: selection))
+            .allowsHitTesting(interactive)
+            .accessibilityHidden(!interactive)
+            .transaction { transaction in
+                transaction.animation = SidebarPaneVisibility.selectionAnimation
+            }
     }
 }
