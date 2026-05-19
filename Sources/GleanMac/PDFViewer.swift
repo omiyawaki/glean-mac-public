@@ -278,11 +278,12 @@ final class PDFThumbnailSidebarView: NSScrollView {
     private(set) var thumbnailItems: [PDFThumbnailItemView] = []
 
     private let stackView = NSStackView()
+    private var lastDisplayedThumbnailWidth: CGFloat = 0
     private var lastRenderedThumbnailWidth: CGFloat = 0
 
     override func layout() {
         super.layout()
-        reloadThumbnailsIfWidthChanged()
+        resizeThumbnailsIfWidthChanged()
     }
 
     override init(frame frameRect: NSRect) {
@@ -297,14 +298,21 @@ final class PDFThumbnailSidebarView: NSScrollView {
 
     deinit {
         NotificationCenter.default.removeObserver(self)
+        NSObject.cancelPreviousPerformRequests(withTarget: self)
     }
 
     func reloadThumbnails() {
+        NSObject.cancelPreviousPerformRequests(withTarget: self)
         thumbnailItems.forEach { $0.removeFromSuperview() }
         thumbnailItems.removeAll()
 
-        guard let document = pdfView?.document else { return }
+        guard let document = pdfView?.document else {
+            lastDisplayedThumbnailWidth = 0
+            lastRenderedThumbnailWidth = 0
+            return
+        }
         let thumbnailWidth = currentThumbnailWidth()
+        lastDisplayedThumbnailWidth = thumbnailWidth
         lastRenderedThumbnailWidth = thumbnailWidth
         let renderScale = max(2, window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2)
         for index in 0..<document.pageCount {
@@ -375,11 +383,59 @@ final class PDFThumbnailSidebarView: NSScrollView {
         thumbnailItems.forEach { $0.isSelected = $0.page === currentPage }
     }
 
-    private func reloadThumbnailsIfWidthChanged() {
+    func rerenderThumbnailsForCurrentWidth() {
+        NSObject.cancelPreviousPerformRequests(
+            withTarget: self,
+            selector: #selector(deferredRerenderThumbnails),
+            object: nil
+        )
+        guard pdfView?.document != nil else { return }
+        let thumbnailWidth = currentThumbnailWidth()
+        let renderScale = currentRenderScale()
+        for item in thumbnailItems {
+            item.resizeThumbnail(
+                to: thumbnailDisplaySize(for: item.page, width: thumbnailWidth)
+            )
+            item.rerenderThumbnail(renderScale: renderScale)
+        }
+        lastDisplayedThumbnailWidth = thumbnailWidth
+        lastRenderedThumbnailWidth = thumbnailWidth
+    }
+
+    private func resizeThumbnailsIfWidthChanged() {
+        guard pdfView?.document != nil, !thumbnailItems.isEmpty else { return }
+        let thumbnailWidth = currentThumbnailWidth()
+        guard abs(thumbnailWidth - lastDisplayedThumbnailWidth) > 0.5 else { return }
+        for item in thumbnailItems {
+            item.resizeThumbnail(to: thumbnailDisplaySize(for: item.page, width: thumbnailWidth))
+        }
+        lastDisplayedThumbnailWidth = thumbnailWidth
+        scheduleDeferredThumbnailRerender()
+    }
+
+    private func scheduleDeferredThumbnailRerender() {
+        NSObject.cancelPreviousPerformRequests(
+            withTarget: self,
+            selector: #selector(deferredRerenderThumbnails),
+            object: nil
+        )
+        perform(
+            #selector(deferredRerenderThumbnails),
+            with: nil,
+            afterDelay: 0.15
+        )
+    }
+
+    @objc
+    private func deferredRerenderThumbnails() {
         guard pdfView?.document != nil else { return }
         let thumbnailWidth = currentThumbnailWidth()
         guard abs(thumbnailWidth - lastRenderedThumbnailWidth) > 0.5 else { return }
-        reloadThumbnails()
+        rerenderThumbnailsForCurrentWidth()
+    }
+
+    private func currentRenderScale() -> CGFloat {
+        max(2, window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2)
     }
 
     private func currentThumbnailWidth() -> CGFloat {
@@ -424,10 +480,16 @@ final class PDFThumbnailItemView: NSControl {
 
     private let imageView = NSImageView()
     private let label = NSTextField(labelWithString: "")
+    private var thumbnailSize: CGSize
+    private var widthConstraint: NSLayoutConstraint?
+    private var heightConstraint: NSLayoutConstraint?
+    private var imageWidthConstraint: NSLayoutConstraint?
+    private var imageHeightConstraint: NSLayoutConstraint?
 
     init(page: PDFPage, pageIndex: Int, thumbnailSize: CGSize, renderScale: CGFloat = 2) {
         self.page = page
         self.pageIndex = pageIndex
+        self.thumbnailSize = thumbnailSize
         super.init(frame: NSRect(
             x: 0,
             y: 0,
@@ -453,17 +515,26 @@ final class PDFThumbnailItemView: NSControl {
         bounds.insetBy(dx: 4, dy: 2).fill()
     }
 
+    func resizeThumbnail(to thumbnailSize: CGSize) {
+        self.thumbnailSize = thumbnailSize
+        frame.size = CGSize(width: thumbnailSize.width + 32, height: thumbnailSize.height + 28)
+        widthConstraint?.constant = thumbnailSize.width + 32
+        heightConstraint?.constant = thumbnailSize.height + 28
+        imageWidthConstraint?.constant = thumbnailSize.width
+        imageHeightConstraint?.constant = thumbnailSize.height
+        needsLayout = true
+    }
+
+    func rerenderThumbnail(renderScale: CGFloat) {
+        imageView.image = renderedThumbnail(renderScale: renderScale)
+    }
+
     private func configureViews(thumbnailSize: CGSize, renderScale: CGFloat) {
         translatesAutoresizingMaskIntoConstraints = false
         imageView.translatesAutoresizingMaskIntoConstraints = false
         label.translatesAutoresizingMaskIntoConstraints = false
 
-        imageView.image = PDFThumbnailRasterizer.thumbnail(
-            page: page,
-            displaySize: thumbnailSize,
-            box: .cropBox,
-            renderScale: renderScale
-        ) ?? page.thumbnail(of: thumbnailSize, for: .cropBox)
+        imageView.image = renderedThumbnail(renderScale: renderScale)
         imageView.imageAlignment = .alignCenter
         imageView.imageScaling = .scaleProportionallyUpOrDown
         imageView.wantsLayer = true
@@ -480,19 +551,37 @@ final class PDFThumbnailItemView: NSControl {
         addSubview(imageView)
         addSubview(label)
 
+        let widthConstraint = widthAnchor.constraint(equalToConstant: thumbnailSize.width + 32)
+        let heightConstraint = heightAnchor.constraint(equalToConstant: thumbnailSize.height + 28)
+        let imageWidthConstraint = imageView.widthAnchor.constraint(equalToConstant: thumbnailSize.width)
+        let imageHeightConstraint = imageView.heightAnchor.constraint(equalToConstant: thumbnailSize.height)
+        self.widthConstraint = widthConstraint
+        self.heightConstraint = heightConstraint
+        self.imageWidthConstraint = imageWidthConstraint
+        self.imageHeightConstraint = imageHeightConstraint
+
         NSLayoutConstraint.activate([
-            widthAnchor.constraint(equalToConstant: thumbnailSize.width + 32),
-            heightAnchor.constraint(equalToConstant: thumbnailSize.height + 28),
+            widthConstraint,
+            heightConstraint,
 
             imageView.topAnchor.constraint(equalTo: topAnchor),
             imageView.centerXAnchor.constraint(equalTo: centerXAnchor),
-            imageView.widthAnchor.constraint(equalToConstant: thumbnailSize.width),
-            imageView.heightAnchor.constraint(equalToConstant: thumbnailSize.height),
+            imageWidthConstraint,
+            imageHeightConstraint,
 
             label.leadingAnchor.constraint(equalTo: leadingAnchor),
             label.trailingAnchor.constraint(equalTo: trailingAnchor),
             label.topAnchor.constraint(equalTo: imageView.bottomAnchor, constant: 6)
         ])
+    }
+
+    private func renderedThumbnail(renderScale: CGFloat) -> NSImage {
+        PDFThumbnailRasterizer.thumbnail(
+            page: page,
+            displaySize: thumbnailSize,
+            box: .cropBox,
+            renderScale: renderScale
+        ) ?? page.thumbnail(of: thumbnailSize, for: .cropBox)
     }
 }
 

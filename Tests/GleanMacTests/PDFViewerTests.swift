@@ -198,6 +198,30 @@ final class PDFViewerTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(cgImage.width, Int(ceil(displayWidth * 2)))
     }
 
+    @MainActor
+    func testThumbnailSidebarResizeKeepsExistingItemsDuringDrag() throws {
+        let url = try makeMultipageImplicitBackgroundPDF(pageCount: 6)
+        let document = try XCTUnwrap(PDFDocument(url: url))
+        let view = PDFThumbnailSplitView(configuration: .previewLike)
+        view.frame = NSRect(x: 0, y: 0, width: 800, height: 500)
+
+        view.setDocument(document)
+        view.layoutSubtreeIfNeeded()
+        let originalItems = view.thumbnailView.thumbnailItems
+        let originalImages = try originalItems.map { try XCTUnwrap($0.thumbnailImage) }
+
+        for position in stride(from: 680, through: 540, by: -10) {
+            view.splitView.setPosition(CGFloat(position), ofDividerAt: 0)
+            view.layoutSubtreeIfNeeded()
+        }
+
+        XCTAssertEqual(view.thumbnailView.thumbnailItems.count, originalItems.count)
+        for (index, item) in view.thumbnailView.thumbnailItems.enumerated() {
+            XCTAssertIdentical(item, originalItems[index])
+            XCTAssertIdentical(item.thumbnailImage, originalImages[index])
+        }
+    }
+
     private final class DarkPageDelegate: NSObject, PDFDocumentDelegate {
         func classForPage() -> AnyClass {
             InvertedPDFPage.self
@@ -222,6 +246,36 @@ final class PDFViewerTests: XCTestCase {
         context.setFillColor(NSColor.black.cgColor)
         context.fill(CGRect(x: 56, y: 56, width: 88, height: 32))
         context.endPDFPage()
+        context.closePDF()
+
+        return url
+    }
+
+    private func makeMultipageImplicitBackgroundPDF(pageCount: Int) throws -> URL {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
+        let url = directory.appendingPathComponent("multipage-implicit-background.pdf")
+        var mediaBox = CGRect(x: 0, y: 0, width: 240, height: 240)
+        guard let context = CGContext(url as CFURL, mediaBox: &mediaBox, nil) else {
+            XCTFail("Could not create fixture PDF.")
+            return url
+        }
+
+        for pageIndex in 0..<pageCount {
+            context.beginPDFPage(nil)
+            context.setFillColor(NSColor.black.cgColor)
+            context.fill(CGRect(
+                x: 48,
+                y: 52 + CGFloat(pageIndex % 4) * 4,
+                width: 100,
+                height: 32
+            ))
+            context.endPDFPage()
+        }
         context.closePDF()
 
         return url
