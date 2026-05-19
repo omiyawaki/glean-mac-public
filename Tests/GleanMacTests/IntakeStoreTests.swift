@@ -176,6 +176,53 @@ final class IntakeStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testLibraryFactoryFallsBackToLocalIndexWhenSnapshotIsMissing() async throws {
+        MockURLProtocol.requestHandler = { request in
+            let response = HTTPURLResponse(
+                url: request.url!, statusCode: 503,
+                httpVersion: nil, headerFields: nil
+            )!
+            return (response, Data())
+        }
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let cache = LibrarySnapshotCache(
+            url: directory.appendingPathComponent("missing.json")
+        )
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
+        let db = directory.appendingPathComponent("index.sqlite")
+        try Self.runSQLite(db: db, sql: """
+        CREATE TABLE records (
+          citekey TEXT PRIMARY KEY,
+          title TEXT NOT NULL,
+          year INTEGER,
+          doi TEXT
+        );
+        CREATE TABLE authors (
+          citekey TEXT,
+          ord INTEGER,
+          family TEXT,
+          given TEXT
+        );
+        INSERT INTO records(citekey, title, year, doi)
+          VALUES ('Local2026Index', 'Local index paper', 2026, NULL);
+        """)
+        let store = Stores.library(
+            snapshotCache: cache,
+            localIndexReader: LocalLibraryIndexReader(databaseURL: db)
+        )
+
+        await store.load()
+
+        XCTAssertTrue(store.hasLoadedOnce)
+        XCTAssertEqual(store.entries.map(\.citekey), ["Local2026Index"])
+        XCTAssertEqual(store.lastError, "HTTP 503")
+    }
+
+    @MainActor
     func testSecondLoadKeepsExistingEntriesUntilNewArrives() async {
         // First load: succeed with one entry.
         MockURLProtocol.requestHandler = { request in
@@ -286,6 +333,15 @@ final class IntakeStoreTests: XCTestCase {
             headerFields: ["Content-Type": "application/json"]
         )!
         return (response, Data(body.utf8))
+    }
+
+    private static func runSQLite(db: URL, sql: String) throws {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/sqlite3")
+        process.arguments = [db.path, sql]
+        try process.run()
+        process.waitUntilExit()
+        XCTAssertEqual(process.terminationStatus, 0)
     }
 }
 
