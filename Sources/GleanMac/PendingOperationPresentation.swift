@@ -77,10 +77,25 @@ enum PendingOperationPresentation {
         case .synced:
             return "Synced"
         case .failed:
-            return operation.errorMessage ?? "Sync failed"
+            return displayErrorMessage(for: operation) ?? "Sync failed"
         case .needsReview:
             return operation.errorMessage ?? "Needs review"
         }
+    }
+
+    private static func displayErrorMessage(for operation: PendingOperation) -> String? {
+        guard let message = operation.errorMessage else { return nil }
+        guard message.contains("worker.py"),
+              message.contains("timed out after"),
+              case .reviewAdd(let doi) = operation.kind,
+              let timeoutRange = message.range(
+                of: #"timed out after \d+ seconds"#,
+                options: .regularExpression
+              )
+        else {
+            return message
+        }
+        return "Adding \(doi) \(message[timeoutRange])"
     }
 
     private static func canChooseTarget(for kind: PendingOperation.Kind) -> Bool {

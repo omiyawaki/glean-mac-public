@@ -52,6 +52,24 @@ final class PendingOperationPresentationTests: XCTestCase {
         )
     }
 
+    func testRowsHideRawWorkerCommandTimeouts() {
+        let operation = PendingOperation(
+            id: UUID(),
+            createdAt: Date(timeIntervalSince1970: 0),
+            kind: .reviewAdd(doi: "10.1002/qj.70100"),
+            status: .failed,
+            errorMessage: "Command '['/usr/bin/python3', '/Users/USERNAME/tools/paper_intake/worker.py', '--add', '10.1002/qj.70100']' timed out after 120 seconds",
+            updatedAt: Date(timeIntervalSince1970: 0)
+        )
+
+        let row = PendingOperationPresentation.row(for: operation)
+
+        XCTAssertEqual(
+            row.statusText,
+            "Adding 10.1002/qj.70100 timed out after 120 seconds"
+        )
+    }
+
     private func makeOperation(status: PendingOperation.Status) -> PendingOperation {
         PendingOperation(
             id: UUID(),
