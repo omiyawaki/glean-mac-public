@@ -29,6 +29,7 @@ where Entry.ID: Hashable {
     private let loadCachedResponse: (() async throws -> Response?)?
     private let saveResponse: ((Response) async throws -> Void)?
     private var optimisticallyRemovedIDs: Set<Entry.ID> = []
+    private var responseETag: String?
 
     init(endpoint: URL,
          timeoutInterval: TimeInterval = 8,
@@ -66,8 +67,29 @@ where Entry.ID: Hashable {
         do {
             var request = URLRequest(url: endpoint)
             request.timeoutInterval = timeoutInterval
+            if let responseETag {
+                request.setValue(responseETag,
+                                 forHTTPHeaderField: "If-None-Match")
+            }
             let (data, response) = try await URLSession.shared.data(for: request)
-            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+            guard let http = response as? HTTPURLResponse else {
+                lastError = "Invalid response"
+                if showSpinner {
+                    await holdSpinner(since: started)
+                    isLoading = false
+                }
+                return
+            }
+            if http.statusCode == 304 {
+                lastError = nil
+                lastRefreshedAt = Date()
+                if showSpinner {
+                    await holdSpinner(since: started)
+                    isLoading = false
+                }
+                return
+            }
+            guard http.statusCode == 200 else {
                 let code = (response as? HTTPURLResponse)?.statusCode ?? -1
                 lastError = "HTTP \(code)"
                 log.warning("load http_error url=\(self.endpoint.absoluteString, privacy: .public) status=\(code, privacy: .public)")
@@ -82,6 +104,7 @@ where Entry.ID: Hashable {
             let payload = try decoder.decode(Response.self, from: data)
             apply(payload, animated: true)
             lastError = nil
+            responseETag = http.value(forHTTPHeaderField: "ETag")
             if let saveResponse {
                 try? await saveResponse(payload)
             }

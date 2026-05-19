@@ -3,6 +3,8 @@ import SwiftUI
 struct ActionQueueButton: View {
     @Bindable var queue: ActionQueueStore
     var backlogStore: BacklogStore? = nil
+    var pendingStore: PendingOperationStore? = nil
+    var syncPendingOperations: (() async -> Void)? = nil
 
     var body: some View {
         Button {
@@ -25,30 +27,56 @@ struct ActionQueueButton: View {
         }
         .help("Activity")
         .popover(isPresented: $queue.isPresented, arrowEdge: .bottom) {
-            ActionQueuePopover(queue: queue, backlogStore: backlogStore)
+            ActionQueuePopover(
+                queue: queue,
+                backlogStore: backlogStore,
+                pendingStore: pendingStore,
+                syncPendingOperations: syncPendingOperations
+            )
                 .frame(width: 380, height: 420)
         }
     }
 
     private var badgeCount: Int {
-        queue.failedCount > 0 ? queue.failedCount : queue.activeCount
+        let attention = queue.failedCount + pendingAttentionCount
+        if attention > 0 { return attention }
+        return queue.activeCount + pendingActiveCount
     }
 
     private var badgeColor: Color {
-        queue.failedCount > 0 ? .red : .accentColor
+        let attention = queue.failedCount + pendingAttentionCount
+        return attention > 0 ? .red : .accentColor
     }
 
     private var systemImage: String {
-        if queue.failedCount > 0 { return "exclamationmark.triangle" }
-        if queue.activeCount > 0 { return "clock.arrow.circlepath" }
-        if queue.entries.isEmpty { return "tray" }
+        if queue.failedCount + pendingAttentionCount > 0 {
+            return "exclamationmark.triangle"
+        }
+        if queue.activeCount + pendingActiveCount > 0 {
+            return "clock.arrow.circlepath"
+        }
+        if queue.entries.isEmpty && pendingRows.isEmpty { return "tray" }
         return "checkmark.circle"
+    }
+
+    private var pendingRows: [PendingOperationPresentation.Row] {
+        PendingOperationPresentation.rows(for: pendingStore?.operations ?? [])
+    }
+
+    private var pendingAttentionCount: Int {
+        PendingOperationPresentation.attentionCount(for: pendingStore?.operations ?? [])
+    }
+
+    private var pendingActiveCount: Int {
+        PendingOperationPresentation.activeCount(for: pendingStore?.operations ?? [])
     }
 }
 
 private struct ActionQueuePopover: View {
     @Bindable var queue: ActionQueueStore
     var backlogStore: BacklogStore?
+    var pendingStore: PendingOperationStore?
+    var syncPendingOperations: (() async -> Void)?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -56,6 +84,17 @@ private struct ActionQueuePopover: View {
                 Text("Activity")
                     .font(.headline)
                 Spacer()
+                if syncPendingOperations != nil {
+                    Button {
+                        Task { await syncPendingOperations?() }
+                    } label: {
+                        Image(systemName: "arrow.triangle.2.circlepath")
+                            .actionQueueIconStyle()
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Sync pending changes")
+                    .disabled(pendingRows.isEmpty)
+                }
                 Button {
                     queue.clearFinished()
                 } label: {
@@ -71,27 +110,56 @@ private struct ActionQueuePopover: View {
 
             Divider()
 
-            if queue.entries.isEmpty {
+            if queue.entries.isEmpty && pendingRows.isEmpty {
                 ContentUnavailableView(
                     "No recent activity",
                     systemImage: "checkmark.circle"
                 )
             } else {
-                List(queue.entries) { entry in
-                    ActionQueueRow(
-                        entry: entry,
-                        backlogEntries: backlogStore?.entries ?? [],
-                        canForceAttach: queue.canForceAttach(entry.id),
-                        retry: { queue.retry(entry.id) },
-                        remove: { queue.remove(entry.id) },
-                        forceAttach: { citekey in
-                            queue.forceAttach(entry.id, citekey: citekey)
+                List {
+                    if !pendingRows.isEmpty {
+                        Section("Pending Sync") {
+                            ForEach(pendingRows) { row in
+                                PendingOperationRow(
+                                    row: row,
+                                    backlogEntries: backlogStore?.entries ?? [],
+                                    chooseTarget: { citekey in
+                                        Task {
+                                            try? await pendingStore?.assignAttachTarget(
+                                                id: row.id,
+                                                citekey: citekey
+                                            )
+                                            await syncPendingOperations?()
+                                        }
+                                    }
+                                )
+                            }
                         }
-                    )
+                    }
+                    if !queue.entries.isEmpty {
+                        Section("Recent") {
+                            ForEach(queue.entries) { entry in
+                                ActionQueueRow(
+                                    entry: entry,
+                                    backlogEntries: backlogStore?.entries ?? [],
+                                    canForceAttach: queue.canForceAttach(entry.id),
+                                    retry: { queue.retry(entry.id) },
+                                    remove: { queue.remove(entry.id) },
+                                    forceAttach: { citekey in
+                                        queue.forceAttach(entry.id, citekey: citekey)
+                                    }
+                                )
+                            }
+                        }
+                    }
                 }
                 .listStyle(.plain)
             }
         }
+    }
+
+    private var pendingRows: [PendingOperationPresentation.Row] {
+        PendingOperationPresentation.rows(for: pendingStore?.operations ?? [])
     }
 }
 
@@ -202,6 +270,89 @@ private struct ActionQueueRow: View {
         case .failed: .red
         case .succeeded: .secondary
         case .queued, .running: .secondary
+        }
+    }
+}
+
+private struct PendingOperationRow: View {
+    let row: PendingOperationPresentation.Row
+    let backlogEntries: [BacklogEntry]
+    let chooseTarget: (String) -> Void
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            statusIcon
+                .frame(width: 18, height: 18)
+                .padding(.top, 2)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Label(row.title, systemImage: row.systemImage)
+                    .font(.subheadline)
+                    .lineLimit(2)
+                if !row.detail.isEmpty {
+                    Text(row.detail)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+                Text(row.statusText)
+                    .font(.caption2)
+                    .foregroundStyle(statusColor)
+                    .lineLimit(2)
+            }
+
+            Spacer(minLength: 8)
+
+            if row.canChooseTarget && !backlogEntries.isEmpty {
+                Menu {
+                    Section("Attach to backlog entry") {
+                        ForEach(backlogEntries) { entry in
+                            Button {
+                                chooseTarget(entry.citekey)
+                            } label: {
+                                Text(entry.title)
+                            }
+                        }
+                    }
+                } label: {
+                    Image(systemName: "link.badge.plus")
+                        .actionQueueIconStyle()
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help("Choose target paper")
+            }
+        }
+        .padding(.vertical, 5)
+    }
+
+    @ViewBuilder
+    private var statusIcon: some View {
+        switch row.status {
+        case .queued, .running:
+            ProgressView()
+                .controlSize(.small)
+        case .synced:
+            Image(systemName: "checkmark.circle.fill")
+                .foregroundStyle(.green)
+        case .failed:
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.red)
+        case .needsReview:
+            Image(systemName: "questionmark.circle.fill")
+                .foregroundStyle(.orange)
+        }
+    }
+
+    private var statusColor: Color {
+        switch row.status {
+        case .failed:
+            return .red
+        case .needsReview:
+            return .orange
+        case .queued, .running, .synced:
+            return .secondary
         }
     }
 }

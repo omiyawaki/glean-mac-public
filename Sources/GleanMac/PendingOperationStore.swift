@@ -126,6 +126,23 @@ final class PendingOperationStore {
         try await save()
     }
 
+    func assignAttachTarget(id: UUID, citekey: String) async throws {
+        try await update(id: id) { operation in
+            guard case .attachPDF(let stagedFilePath, _) = operation.kind else {
+                return
+            }
+            operation = PendingOperation(
+                id: operation.id,
+                createdAt: operation.createdAt,
+                kind: .attachPDF(stagedFilePath: stagedFilePath,
+                                 citekey: citekey),
+                status: .queued,
+                errorMessage: nil,
+                updatedAt: Date()
+            )
+        }
+    }
+
     private func update(id: UUID, mutate: (inout PendingOperation) -> Void) async throws {
         guard let index = operations.firstIndex(where: { $0.id == id }) else { return }
         mutate(&operations[index])

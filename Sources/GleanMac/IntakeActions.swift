@@ -61,8 +61,19 @@ enum IntakeActions {
                 try await attach(file: URL(fileURLWithPath: stagedFilePath),
                                  citekey: citekey,
                                  operationID: operation.id)
-            case .addPaper(let input, _):
-                try await reviewAdd(doi: input, operationID: operation.id)
+            case .addPaper(let input, let stagedPDFPath):
+                let trimmedInput = input.trimmingCharacters(
+                    in: .whitespacesAndNewlines
+                )
+                if !trimmedInput.isEmpty {
+                    try await reviewAdd(doi: trimmedInput,
+                                        operationID: operation.id)
+                }
+                if let stagedPDFPath {
+                    try await attach(file: URL(fileURLWithPath: stagedPDFPath),
+                                     citekey: nil,
+                                     operationID: operation.id)
+                }
             }
             return .synced
         } catch ActionError.http(409, let detail) {

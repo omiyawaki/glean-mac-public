@@ -86,6 +86,40 @@ final class IntakeActionsTests: XCTestCase {
         XCTAssertTrue(capture.body?.contains("%PDF-1.7") == true)
     }
 
+    func testSubmitAddPaperWithStagedPDFAddsThenUploadsPDF() async throws {
+        let source = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("pdf")
+        try Data("%PDF-1.7\n10.1000/add".utf8).write(to: source)
+        let capture = RequestCapture()
+        MockURLProtocol.requestHandler = { request in
+            capture.paths.append(request.url?.path ?? "")
+            capture.operationIDs.append(
+                request.value(forHTTPHeaderField: "X-Glean-Operation-ID") ?? ""
+            )
+            capture.bodies.append(Self.bodyString(from: request) ?? "")
+            return Self.ok(request: request)
+        }
+        let id = UUID(uuidString: "33333333-3333-3333-3333-333333333333")!
+        let operation = PendingOperation(
+            id: id,
+            createdAt: Date(timeIntervalSince1970: 0),
+            kind: .addPaper(input: "10.1000/add",
+                            stagedPDFPath: source.path),
+            status: .queued,
+            errorMessage: nil,
+            updatedAt: Date(timeIntervalSince1970: 0)
+        )
+
+        let result = try await IntakeActions.submit(operation)
+
+        XCTAssertEqual(result, .synced)
+        XCTAssertEqual(capture.paths, ["/api/review/add", "/attach"])
+        XCTAssertEqual(capture.operationIDs, [id.uuidString, id.uuidString])
+        XCTAssertTrue(capture.bodies[0].contains("doi=10.1000/add"))
+        XCTAssertTrue(capture.bodies[1].contains("%PDF-1.7"))
+    }
+
     private static func ok(request: URLRequest) -> (HTTPURLResponse, Data) {
         let response = HTTPURLResponse(
             url: request.url!, statusCode: 200,
@@ -121,4 +155,7 @@ private final class RequestCapture {
     nonisolated(unsafe) var operationID: String?
     nonisolated(unsafe) var contentType: String?
     nonisolated(unsafe) var body: String?
+    nonisolated(unsafe) var paths: [String] = []
+    nonisolated(unsafe) var operationIDs: [String] = []
+    nonisolated(unsafe) var bodies: [String] = []
 }

@@ -143,6 +143,55 @@ final class IntakeStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testSecondLoadSendsETagAndKeepsEntriesOnNotModified() async {
+        var requestCount = 0
+        MockURLProtocol.requestHandler = { request in
+            requestCount += 1
+            if requestCount == 1 {
+                let body = """
+                {"count":1,"entries":[{
+                  "added_at":"2026-04-25T08:00:00Z",
+                  "citekey":"CachedByETag",
+                  "doi":"10.1000/etag",
+                  "last_attempt_at":null,
+                  "title":"ETag paper",
+                  "tried":[]
+                }]}
+                """
+                let data = Data(body.utf8)
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 200,
+                    httpVersion: nil,
+                    headerFields: ["ETag": "\"v1\""]
+                )!
+                return (response, data)
+            }
+
+            XCTAssertEqual(
+                request.value(forHTTPHeaderField: "If-None-Match"),
+                "\"v1\""
+            )
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: 304,
+                httpVersion: nil,
+                headerFields: ["ETag": "\"v1\""]
+            )!
+            return (response, Data())
+        }
+
+        let store = makeBacklogStore()
+
+        await store.load()
+        await store.load(silent: true)
+
+        XCTAssertEqual(requestCount, 2)
+        XCTAssertEqual(store.entries.map(\.citekey), ["CachedByETag"])
+        XCTAssertNil(store.lastError)
+    }
+
+    @MainActor
     func testLibraryFactoryLoadsCachedSnapshotBeforeNetworkFailure() async throws {
         MockURLProtocol.requestHandler = { request in
             let response = HTTPURLResponse(

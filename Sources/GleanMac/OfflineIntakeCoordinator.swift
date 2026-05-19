@@ -4,11 +4,14 @@ import Foundation
 struct OfflineIntakeCoordinator {
     let operationStore: PendingOperationStore
     let pdfStager: PendingPDFStager
+    let signalExtractor: LocalPaperSignalExtractor
 
     init(operationStore: PendingOperationStore,
-         pdfStager: PendingPDFStager = .default) {
+         pdfStager: PendingPDFStager = .default,
+         signalExtractor: LocalPaperSignalExtractor = .default) {
         self.operationStore = operationStore
         self.pdfStager = pdfStager
+        self.signalExtractor = signalExtractor
     }
 
     @discardableResult
@@ -43,14 +46,20 @@ struct OfflineIntakeCoordinator {
     @discardableResult
     func queueAddPaper(input: String,
                        pdf: URL? = nil) async throws -> PendingOperation {
+        var normalizedInput = input.trimmingCharacters(in: .whitespacesAndNewlines)
         let stagedPDFPath: String?
         if let pdf {
-            stagedPDFPath = try await pdfStager.stage(pdf).path
+            let staged = try await pdfStager.stage(pdf)
+            stagedPDFPath = staged.path
+            if normalizedInput.isEmpty,
+               let candidate = try await signalExtractor.doiCandidates(in: staged).first {
+                normalizedInput = candidate
+            }
         } else {
             stagedPDFPath = nil
         }
         return try await operationStore.enqueue(
-            .addPaper(input: input, stagedPDFPath: stagedPDFPath)
+            .addPaper(input: normalizedInput, stagedPDFPath: stagedPDFPath)
         )
     }
 }

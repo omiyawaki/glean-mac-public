@@ -41,6 +41,7 @@ struct ContentView: View {
     @State private var reviewStore = Stores.review()
     @State private var authorStore = Stores.author()
     @State private var libraryStore = Stores.library()
+    @State private var libraryListState = LibraryListState()
     @State private var libraryDetailStore = LibraryDetailStore()
     @State private var actionQueue = ActionQueueStore()
     @State private var operationStore = PendingOperationStore.default
@@ -73,7 +74,12 @@ struct ContentView: View {
             // boxed-in next to the other toolbar items.
             LocalAppUpdateToolbarItem(controller: updateController)
             ToolbarItem(placement: .primaryAction) {
-                ActionQueueButton(queue: actionQueue, backlogStore: backlogStore)
+                ActionQueueButton(
+                    queue: actionQueue,
+                    backlogStore: backlogStore,
+                    pendingStore: operationStore,
+                    syncPendingOperations: syncPendingOperations
+                )
             }
         }
         .task {
@@ -213,6 +219,7 @@ struct ContentView: View {
         switch selection {
         case .libraryAll:
             LibraryView(store: libraryStore,
+                        listState: libraryListState,
                         selection: $librarySelection,
                         query: $libraryQuery)
         case .backlog:

@@ -46,6 +46,30 @@ final class PendingOperationStoreTests: XCTestCase {
         XCTAssertEqual(reloaded.operations.first?.errorMessage, "Server unavailable")
     }
 
+    func testAssignAttachTargetKeepsStagedPDFAndQueuesForSync() async throws {
+        let url = tempURL()
+        let store = PendingOperationStore(url: url)
+        let operation = try await store.enqueue(
+            .attachPDF(stagedFilePath: "/tmp/staged.pdf", citekey: nil)
+        )
+        try await store.markNeedsReview(id: operation.id, message: "Choose a paper")
+
+        try await store.assignAttachTarget(
+            id: operation.id,
+            citekey: "Abdi2026Hrrrcast"
+        )
+
+        let reloaded = PendingOperationStore(url: url)
+        try await reloaded.load()
+        XCTAssertEqual(
+            reloaded.operations.first?.kind,
+            .attachPDF(stagedFilePath: "/tmp/staged.pdf",
+                       citekey: "Abdi2026Hrrrcast")
+        )
+        XCTAssertEqual(reloaded.operations.first?.status, .queued)
+        XCTAssertNil(reloaded.operations.first?.errorMessage)
+    }
+
     private func tempURL() -> URL {
         FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString)

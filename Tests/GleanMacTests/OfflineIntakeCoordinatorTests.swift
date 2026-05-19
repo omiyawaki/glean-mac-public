@@ -69,6 +69,54 @@ final class OfflineIntakeCoordinatorTests: XCTestCase {
         }
     }
 
+    func testQueueAddPaperRecordsDOIOnlyInput() async throws {
+        let store = PendingOperationStore(url: tempURL())
+        let coordinator = OfflineIntakeCoordinator(operationStore: store)
+
+        let operation = try await coordinator.queueAddPaper(input: "10.1000/new")
+
+        XCTAssertEqual(operation.kind, .addPaper(input: "10.1000/new",
+                                                stagedPDFPath: nil))
+    }
+
+    func testQueueAddPaperRecordsURLOnlyInput() async throws {
+        let store = PendingOperationStore(url: tempURL())
+        let coordinator = OfflineIntakeCoordinator(operationStore: store)
+
+        let operation = try await coordinator.queueAddPaper(
+            input: "https://example.org/paper"
+        )
+
+        XCTAssertEqual(operation.kind, .addPaper(input: "https://example.org/paper",
+                                                stagedPDFPath: nil))
+    }
+
+    func testQueueAddPaperWithPDFOnlyUsesExtractedDOIAsInput() async throws {
+        let source = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("pdf")
+        try Data("%PDF-1.7\n10.1175/JAS-D-25-0123.1\n".utf8).write(to: source)
+        let store = PendingOperationStore(url: tempURL())
+        let stager = PendingPDFStager(
+            directory: FileManager.default.temporaryDirectory
+                .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        )
+        let coordinator = OfflineIntakeCoordinator(
+            operationStore: store,
+            pdfStager: stager,
+            signalExtractor: .default
+        )
+
+        let operation = try await coordinator.queueAddPaper(input: "", pdf: source)
+
+        if case .addPaper(let input, let stagedPDFPath) = operation.kind {
+            XCTAssertEqual(input, "10.1175/JAS-D-25-0123.1")
+            XCTAssertNotNil(stagedPDFPath)
+        } else {
+            XCTFail("Expected addPaper operation")
+        }
+    }
+
     private func tempURL() -> URL {
         FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString)

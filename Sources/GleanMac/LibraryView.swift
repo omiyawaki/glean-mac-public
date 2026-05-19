@@ -2,11 +2,10 @@ import SwiftUI
 
 struct LibraryView: View {
     let store: LibraryStore
+    let listState: LibraryListState
     @Binding var selection: String?
     @Binding var query: String
     @State private var now = Date()
-    @State private var grouped: [LibraryFilter.YearGroup] = []
-    @State private var visibleCount: Int = 0
 
     private let ticker = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
 
@@ -27,7 +26,7 @@ struct LibraryView: View {
                 }
             } else {
                 List(selection: $selection) {
-                    ForEach(grouped, id: \.year) { group in
+                    ForEach(listState.grouped, id: \.year) { group in
                         Section(group.year.map { String($0) } ?? "Undated") {
                             ForEach(group.entries) { entry in
                                 LibraryRow(entry: entry).tag(entry.id)
@@ -35,7 +34,7 @@ struct LibraryView: View {
                         }
                     }
                 }
-                .animation(nil, value: grouped)
+                .animation(nil, value: listState.grouped)
             }
         }
         .navigationTitle("All Papers")
@@ -63,15 +62,13 @@ struct LibraryView: View {
     /// stable value across body re-evaluations. The pure logic lives
     /// in LibraryFilter (covered by tests).
     private func recomputeGroups() {
-        let entries = LibraryFilter.filter(store.entries, query: query)
-        visibleCount = entries.count
-        grouped = LibraryFilter.groupByYear(entries)
+        listState.update(entries: store.entries, query: query)
     }
 
     private var subtitle: String {
         guard store.hasLoadedOnce else { return "" }
         let total = store.count
-        let visible = visibleCount
+        let visible = listState.visibleCount
         let countPart: String
         if visible == total {
             countPart = total == 1 ? "1 paper" : "\(total) papers"
