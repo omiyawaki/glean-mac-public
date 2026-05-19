@@ -64,11 +64,12 @@ struct LocalLibraryIndexReader {
         process.standardOutput = output
         process.standardError = error
         try process.run()
-        process.waitUntilExit()
         let data = output.fileHandleForReading.readDataToEndOfFile()
+        let errorData = error.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
         if process.terminationStatus != 0 {
             let message = String(
-                data: error.fileHandleForReading.readDataToEndOfFile(),
+                data: errorData,
                 encoding: .utf8
             ) ?? "sqlite3 failed"
             throw LocalIndexError.sqlite(message.trimmingCharacters(in: .whitespacesAndNewlines))

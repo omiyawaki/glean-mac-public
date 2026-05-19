@@ -51,6 +51,57 @@ final class LocalLibraryIndexReaderTests: XCTestCase {
         XCTAssertNil(response)
     }
 
+    func testReadDrainsLargeSQLiteOutputWithoutDeadlocking() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory,
+                                                withIntermediateDirectories: true)
+        let db = directory.appendingPathComponent("index.sqlite")
+        FileManager.default.createFile(atPath: db.path, contents: Data())
+        let fakeSQLite = directory.appendingPathComponent("sqlite3-fake")
+        try """
+        #!/bin/sh
+        query="$3"
+        case "$query" in
+          *"FROM records"*)
+            printf '['
+            i=0
+            while [ "$i" -lt 5000 ]; do
+              if [ "$i" -gt 0 ]; then printf ','; fi
+              printf '{"citekey":"Paper%s","title":"Large output paper %s","year":2026,"doi":"10.1000/%s"}' "$i" "$i" "$i"
+              i=$((i + 1))
+            done
+            printf ']'
+            ;;
+          *"FROM authors"*)
+            printf '[]'
+            ;;
+          *)
+            printf '[]'
+            ;;
+        esac
+        """.write(to: fakeSQLite, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: fakeSQLite.path
+        )
+        let reader = LocalLibraryIndexReader(databaseURL: db,
+                                             sqliteExecutableURL: fakeSQLite)
+        let finished = expectation(description: "large sqlite output drained")
+
+        Task {
+            do {
+                let response = try await reader.load()
+                XCTAssertEqual(response?.count, 5000)
+            } catch {
+                XCTFail("load failed: \(error)")
+            }
+            finished.fulfill()
+        }
+
+        await fulfillment(of: [finished], timeout: 2.0)
+    }
+
     private func runSQLite(db: URL, sql: String) throws {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/sqlite3")
