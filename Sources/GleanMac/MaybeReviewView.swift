@@ -3,6 +3,8 @@ import SwiftUI
 struct MaybeReviewView: View {
     let store: ReviewStore
     let actionQueue: ActionQueueStore
+    let offlineCoordinator: OfflineIntakeCoordinator
+    let syncPendingOperations: () async -> Void
     @State private var now = Date()
 
     private let ticker = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
@@ -81,17 +83,14 @@ struct MaybeReviewView: View {
             systemImage: kind.systemImage
         ) {
             store.optimisticallyRemove(id: id)
-            do {
-                switch kind {
-                case .add: try await IntakeActions.reviewAdd(doi: entry.doi)
-                case .skip: try await IntakeActions.reviewSkip(doi: entry.doi)
-                }
-                store.releaseOptimisticRemoval(id: id)
-            } catch {
-                store.releaseOptimisticRemoval(id: id)
-                await store.load(silent: true)
-                throw error
+            switch kind {
+            case .add:
+                try await offlineCoordinator.queueReviewAdd(doi: entry.doi)
+            case .skip:
+                try await offlineCoordinator.queueReviewSkip(doi: entry.doi)
             }
+            store.releaseOptimisticRemoval(id: id)
+            await syncPendingOperations()
         }
     }
 

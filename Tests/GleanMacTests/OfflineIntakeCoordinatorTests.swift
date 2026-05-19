@@ -1,0 +1,77 @@
+import XCTest
+@testable import GleanMac
+
+@MainActor
+final class OfflineIntakeCoordinatorTests: XCTestCase {
+    func testQueueAttachStagesPDFAndRecordsOperation() async throws {
+        let source = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("pdf")
+        try Data("%PDF-1.7\nattach".utf8).write(to: source)
+        let store = PendingOperationStore(url: tempURL())
+        let stager = PendingPDFStager(
+            directory: FileManager.default.temporaryDirectory
+                .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        )
+        let coordinator = OfflineIntakeCoordinator(
+            operationStore: store,
+            pdfStager: stager
+        )
+
+        let operation = try await coordinator.queueAttachPDF(source,
+                                                             citekey: "Abdi2026Hrrrcast")
+
+        XCTAssertEqual(store.operations.count, 1)
+        XCTAssertEqual(store.operations.first?.id, operation.id)
+        if case .attachPDF(let stagedFilePath, let citekey) = operation.kind {
+            XCTAssertEqual(citekey, "Abdi2026Hrrrcast")
+            XCTAssertTrue(FileManager.default.fileExists(atPath: stagedFilePath))
+            XCTAssertNotEqual(stagedFilePath, source.path)
+        } else {
+            XCTFail("Expected attachPDF operation")
+        }
+    }
+
+    func testQueueReviewAddRecordsOperationWithoutServerCall() async throws {
+        let store = PendingOperationStore(url: tempURL())
+        let coordinator = OfflineIntakeCoordinator(operationStore: store)
+
+        let operation = try await coordinator.queueReviewAdd(doi: "10.1000/add")
+
+        XCTAssertEqual(operation.kind, .reviewAdd(doi: "10.1000/add"))
+        XCTAssertEqual(store.pendingOperations.map(\.id), [operation.id])
+    }
+
+    func testQueueAddPaperRecordsInputAndOptionalPDF() async throws {
+        let source = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("pdf")
+        try Data("%PDF-1.7\nadd".utf8).write(to: source)
+        let store = PendingOperationStore(url: tempURL())
+        let stager = PendingPDFStager(
+            directory: FileManager.default.temporaryDirectory
+                .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        )
+        let coordinator = OfflineIntakeCoordinator(
+            operationStore: store,
+            pdfStager: stager
+        )
+
+        let operation = try await coordinator.queueAddPaper(input: "10.1000/new",
+                                                            pdf: source)
+
+        if case .addPaper(let input, let stagedPDFPath) = operation.kind {
+            XCTAssertEqual(input, "10.1000/new")
+            XCTAssertNotNil(stagedPDFPath)
+            XCTAssertTrue(FileManager.default.fileExists(atPath: stagedPDFPath!))
+        } else {
+            XCTFail("Expected addPaper operation")
+        }
+    }
+
+    private func tempURL() -> URL {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathComponent("operations.json")
+    }
+}

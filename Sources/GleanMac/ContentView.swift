@@ -43,6 +43,8 @@ struct ContentView: View {
     @State private var libraryStore = Stores.library()
     @State private var libraryDetailStore = LibraryDetailStore()
     @State private var actionQueue = ActionQueueStore()
+    @State private var operationStore = PendingOperationStore.default
+    @State private var syncWorker: PendingOperationSyncWorker?
     @State private var eventStream: EventStream?
 
     private static let eventsURL = URL(
@@ -77,6 +79,11 @@ struct ContentView: View {
         .task {
             await updateController.checkForUpdates()
             guard eventStream == nil else { return }
+            try? await operationStore.load()
+            let pendingOperations = operationStore
+            let sync = PendingOperationSyncWorker(store: pendingOperations)
+            syncWorker = sync
+            await sync.syncPending()
             let backlog = backlogStore
             let review = reviewStore
             let author = authorStore
@@ -84,6 +91,7 @@ struct ContentView: View {
             let stream = EventStream(url: Self.eventsURL) { event in
                 switch event {
                 case "intake-changed":
+                    await sync.syncPending()
                     async let a: Void = backlog.load(silent: true)
                     async let b: Void = review.load(silent: true)
                     async let c: Void = author.load(silent: true)
@@ -210,13 +218,19 @@ struct ContentView: View {
         case .backlog:
             BacklogView(store: backlogStore,
                         actionQueue: actionQueue,
+                        offlineCoordinator: offlineCoordinator,
+                        syncPendingOperations: syncPendingOperations,
                         selection: $backlogSelection)
         case .maybeReview:
             MaybeReviewView(store: reviewStore,
-                            actionQueue: actionQueue)
+                            actionQueue: actionQueue,
+                            offlineCoordinator: offlineCoordinator,
+                            syncPendingOperations: syncPendingOperations)
         case .authorProposals:
             AuthorProposalsView(store: authorStore,
-                                actionQueue: actionQueue)
+                                actionQueue: actionQueue,
+                                offlineCoordinator: offlineCoordinator,
+                                syncPendingOperations: syncPendingOperations)
         case .none:
             ContentUnavailableView(
                 "Select a section",
@@ -239,6 +253,8 @@ struct ContentView: View {
             BacklogDetailView(
                 entry: selectedBacklogEntry,
                 actionQueue: actionQueue,
+                offlineCoordinator: offlineCoordinator,
+                syncPendingOperations: syncPendingOperations,
                 inspectorPresented: $inspectorPresented
             )
         case .maybeReview, .authorProposals, .none:
@@ -268,5 +284,13 @@ struct ContentView: View {
     private var selectedBacklogEntry: BacklogEntry? {
         guard let id = backlogSelection else { return nil }
         return backlogStore.entries.first(where: { $0.id == id })
+    }
+
+    private var offlineCoordinator: OfflineIntakeCoordinator {
+        OfflineIntakeCoordinator(operationStore: operationStore)
+    }
+
+    private func syncPendingOperations() async {
+        await syncWorker?.syncPending()
     }
 }

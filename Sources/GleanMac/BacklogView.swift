@@ -3,6 +3,8 @@ import SwiftUI
 struct BacklogView: View {
     let store: BacklogStore
     let actionQueue: ActionQueueStore
+    let offlineCoordinator: OfflineIntakeCoordinator
+    let syncPendingOperations: () async -> Void
     @Binding var selection: String?
     @State private var now = Date()
 
@@ -59,12 +61,14 @@ struct BacklogView: View {
                     detail: url.lastPathComponent,
                     systemImage: "doc.richtext",
                     operation: {
-                        try await IntakeActions.attach(file: url)
+                        try await offlineCoordinator.queueAttachPDF(url)
                         trashSourcePDF(url)
+                        await syncPendingOperations()
                     },
                     forceAttach: { citekey in
-                        try await IntakeActions.attach(file: url, citekey: citekey)
+                        try await offlineCoordinator.queueAttachPDF(url, citekey: citekey)
                         trashSourcePDF(url)
+                        await syncPendingOperations()
                     }
                 )
             }
@@ -94,12 +98,14 @@ struct BacklogView: View {
                 detail: url.lastPathComponent,
                 systemImage: "doc.richtext",
                 operation: {
-                    try await IntakeActions.attach(file: url, citekey: citekey)
+                    try await offlineCoordinator.queueAttachPDF(url, citekey: citekey)
                     trashSourcePDF(url)
+                    await syncPendingOperations()
                 },
                 forceAttach: { altCitekey in
-                    try await IntakeActions.attach(file: url, citekey: altCitekey)
+                    try await offlineCoordinator.queueAttachPDF(url, citekey: altCitekey)
                     trashSourcePDF(url)
+                    await syncPendingOperations()
                 }
             )
         }

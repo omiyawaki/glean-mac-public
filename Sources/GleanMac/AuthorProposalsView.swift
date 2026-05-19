@@ -3,6 +3,8 @@ import SwiftUI
 struct AuthorProposalsView: View {
     let store: AuthorStore
     let actionQueue: ActionQueueStore
+    let offlineCoordinator: OfflineIntakeCoordinator
+    let syncPendingOperations: () async -> Void
     @State private var now = Date()
 
     private let ticker = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
@@ -81,17 +83,14 @@ struct AuthorProposalsView: View {
             systemImage: kind.systemImage
         ) {
             store.optimisticallyRemove(id: id)
-            do {
-                switch kind {
-                case .follow: try await IntakeActions.authorFollow(author: proposal.author)
-                case .dismiss: try await IntakeActions.authorDismiss(author: proposal.author)
-                }
-                store.releaseOptimisticRemoval(id: id)
-            } catch {
-                store.releaseOptimisticRemoval(id: id)
-                await store.load(silent: true)
-                throw error
+            switch kind {
+            case .follow:
+                try await offlineCoordinator.queueAuthorFollow(author: proposal.author)
+            case .dismiss:
+                try await offlineCoordinator.queueAuthorDismiss(author: proposal.author)
             }
+            store.releaseOptimisticRemoval(id: id)
+            await syncPendingOperations()
         }
     }
 

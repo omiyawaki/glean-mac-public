@@ -4,6 +4,8 @@ import AppKit
 struct BacklogDetailView: View {
     let entry: BacklogEntry?
     let actionQueue: ActionQueueStore
+    let offlineCoordinator: OfflineIntakeCoordinator
+    let syncPendingOperations: () async -> Void
     @Binding var inspectorPresented: Bool
     @State private var actionError: String?
     @State private var showError = false
@@ -24,8 +26,9 @@ struct BacklogDetailView: View {
                         detail: downloadedURL.lastPathComponent,
                         systemImage: "doc.richtext"
                     ) {
-                        try await IntakeActions.attach(file: downloadedURL,
-                                                       citekey: ck)
+                        try await offlineCoordinator.queueAttachPDF(downloadedURL,
+                                                                    citekey: ck)
+                        await syncPendingOperations()
                     }
                 } onDownloadFailed: { message in
                     actionError = message

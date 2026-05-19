@@ -25,7 +25,7 @@ enum IntakeActions {
             }
         }
 
-        private static func serverMessage(from detail: String) -> String? {
+        static func serverMessage(from detail: String) -> String? {
             let trimmed = detail.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else { return nil }
             if let data = trimmed.data(using: .utf8),
@@ -46,22 +46,53 @@ enum IntakeActions {
         }
     }
 
-    static func reviewAdd(doi: String) async throws {
+    static func submit(_ operation: PendingOperation) async throws -> PendingOperationSyncResult {
+        do {
+            switch operation.kind {
+            case .reviewAdd(let doi):
+                try await reviewAdd(doi: doi, operationID: operation.id)
+            case .reviewSkip(let doi):
+                try await reviewSkip(doi: doi, operationID: operation.id)
+            case .authorFollow(let author):
+                try await authorFollow(author: author, operationID: operation.id)
+            case .authorDismiss(let author):
+                try await authorDismiss(author: author, operationID: operation.id)
+            case .attachPDF(let stagedFilePath, let citekey):
+                try await attach(file: URL(fileURLWithPath: stagedFilePath),
+                                 citekey: citekey,
+                                 operationID: operation.id)
+            case .addPaper(let input, _):
+                try await reviewAdd(doi: input, operationID: operation.id)
+            }
+            return .synced
+        } catch ActionError.http(409, let detail) {
+            return .needsReview(ActionError.serverMessage(from: detail) ?? "Needs review")
+        }
+    }
+
+    static func reviewAdd(doi: String, operationID: UUID? = nil) async throws {
         try await post(path: "/api/review/add",
                        form: ["doi": doi],
-                       timeoutInterval: reviewAddTimeout)
+                       timeoutInterval: reviewAddTimeout,
+                       operationID: operationID)
     }
 
-    static func reviewSkip(doi: String) async throws {
-        try await post(path: "/api/review/skip", form: ["doi": doi])
+    static func reviewSkip(doi: String, operationID: UUID? = nil) async throws {
+        try await post(path: "/api/review/skip",
+                       form: ["doi": doi],
+                       operationID: operationID)
     }
 
-    static func authorFollow(author: String) async throws {
-        try await post(path: "/api/author/follow", form: ["author": author])
+    static func authorFollow(author: String, operationID: UUID? = nil) async throws {
+        try await post(path: "/api/author/follow",
+                       form: ["author": author],
+                       operationID: operationID)
     }
 
-    static func authorDismiss(author: String) async throws {
-        try await post(path: "/api/author/dismiss", form: ["author": author])
+    static func authorDismiss(author: String, operationID: UUID? = nil) async throws {
+        try await post(path: "/api/author/dismiss",
+                       form: ["author": author],
+                       operationID: operationID)
     }
 
     /// Multipart upload of a local PDF to home's /attach endpoint. The
@@ -77,7 +108,9 @@ enum IntakeActions {
     /// way to land a PDF whose body doesn't print its own DOI — Physics
     /// Today's PT.3.NNNN papers are the canonical example; the
     /// downloaded PDF only contains DOIs of cited works.
-    static func attach(file url: URL, citekey: String? = nil) async throws {
+    static func attach(file url: URL,
+                       citekey: String? = nil,
+                       operationID: UUID? = nil) async throws {
         let fileData = try Data(contentsOf: url)
         let boundary = UUID().uuidString
 
@@ -99,6 +132,10 @@ enum IntakeActions {
         request.httpMethod = "POST"
         request.setValue("multipart/form-data; boundary=\(boundary)",
                          forHTTPHeaderField: "Content-Type")
+        if let operationID {
+            request.setValue(operationID.uuidString,
+                             forHTTPHeaderField: "X-Glean-Operation-ID")
+        }
         request.timeoutInterval = 180
         request.httpBody = body
 
@@ -120,11 +157,16 @@ enum IntakeActions {
 
     private static func post(path: String,
                              form: [String: String],
-                             timeoutInterval: TimeInterval = defaultPostTimeout) async throws {
+                             timeoutInterval: TimeInterval = defaultPostTimeout,
+                             operationID: UUID? = nil) async throws {
         var request = URLRequest(url: baseURL.appendingPathComponent(path))
         request.httpMethod = "POST"
         request.setValue("application/x-www-form-urlencoded",
                          forHTTPHeaderField: "Content-Type")
+        if let operationID {
+            request.setValue(operationID.uuidString,
+                             forHTTPHeaderField: "X-Glean-Operation-ID")
+        }
         request.timeoutInterval = timeoutInterval
         request.httpBody = encode(form: form).data(using: .utf8)
 
