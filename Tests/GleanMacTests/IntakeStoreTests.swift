@@ -87,6 +87,62 @@ final class IntakeStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testInitialLoadUsesCachedResponseWhenNetworkFails() async {
+        MockURLProtocol.requestHandler = { request in
+            let response = HTTPURLResponse(
+                url: request.url!, statusCode: 503,
+                httpVersion: nil, headerFields: nil
+            )!
+            return (response, Data())
+        }
+
+        let cached = BacklogResponse(count: 1, entries: [
+            BacklogEntry(
+                citekey: "Cached2026Paper",
+                doi: "10.1000/cached",
+                title: "Cached paper",
+                addedAt: Date(timeIntervalSince1970: 0),
+                lastAttemptAt: nil,
+                tried: []
+            )
+        ])
+        let store = makeBacklogStore(loadCachedResponse: { cached })
+
+        await store.load()
+
+        XCTAssertTrue(store.hasLoadedOnce)
+        XCTAssertEqual(store.count, 1)
+        XCTAssertEqual(store.entries.map(\.citekey), ["Cached2026Paper"])
+        XCTAssertEqual(store.lastError, "HTTP 503")
+        XCTAssertFalse(store.isLoading)
+    }
+
+    @MainActor
+    func testSuccessfulLoadSavesResponse() async {
+        MockURLProtocol.requestHandler = { request in
+            let body = """
+            {"count":1,"entries":[{
+              "added_at":"2026-04-25T08:00:00Z",
+              "citekey":"Fresh2026Paper",
+              "doi":"10.1000/fresh",
+              "last_attempt_at":null,
+              "title":"Fresh paper",
+              "tried":[]
+            }]}
+            """
+            return Self.ok(request: request, body: body)
+        }
+
+        var saved: BacklogResponse?
+        let store = makeBacklogStore(saveResponse: { saved = $0 })
+
+        await store.load()
+
+        XCTAssertEqual(saved?.count, 1)
+        XCTAssertEqual(saved?.entries.map(\.citekey), ["Fresh2026Paper"])
+    }
+
+    @MainActor
     func testSecondLoadKeepsExistingEntriesUntilNewArrives() async {
         // First load: succeed with one entry.
         MockURLProtocol.requestHandler = { request in
@@ -174,11 +230,16 @@ final class IntakeStoreTests: XCTestCase {
     // MARK: - factory
 
     @MainActor
-    private func makeBacklogStore() -> IntakeStore<BacklogEntry, BacklogResponse> {
+    private func makeBacklogStore(
+        loadCachedResponse: (() async throws -> BacklogResponse?)? = nil,
+        saveResponse: ((BacklogResponse) async throws -> Void)? = nil
+    ) -> IntakeStore<BacklogEntry, BacklogResponse> {
         IntakeStore(
             endpoint: URL(string: "http://test.local/api/backlog")!,
             timeoutInterval: 2,
             minSpinnerDuration: .milliseconds(0),  // skip the perceptibility floor in tests
+            loadCachedResponse: loadCachedResponse,
+            saveResponse: saveResponse,
             extract: { ($0.count, $0.entries) }
         )
     }

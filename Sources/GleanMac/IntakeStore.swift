@@ -26,15 +26,21 @@ where Entry.ID: Hashable {
     private let extract: (Response) -> (Int, [Entry])
     private let timeoutInterval: TimeInterval
     private let minSpinnerDuration: Duration
+    private let loadCachedResponse: (() async throws -> Response?)?
+    private let saveResponse: ((Response) async throws -> Void)?
     private var optimisticallyRemovedIDs: Set<Entry.ID> = []
 
     init(endpoint: URL,
          timeoutInterval: TimeInterval = 8,
          minSpinnerDuration: Duration = .milliseconds(700),
+         loadCachedResponse: (() async throws -> Response?)? = nil,
+         saveResponse: ((Response) async throws -> Void)? = nil,
          extract: @escaping (Response) -> (Int, [Entry])) {
         self.endpoint = endpoint
         self.timeoutInterval = timeoutInterval
         self.minSpinnerDuration = minSpinnerDuration
+        self.loadCachedResponse = loadCachedResponse
+        self.saveResponse = saveResponse
         self.extract = extract
     }
 
@@ -46,6 +52,16 @@ where Entry.ID: Hashable {
         if showSpinner { isLoading = true }
         let started = ContinuousClock.now
         log.debug("load start url=\(self.endpoint.absoluteString, privacy: .public) silent=\(silent, privacy: .public)")
+
+        if !hasLoadedOnce, let loadCachedResponse {
+            do {
+                if let cached = try await loadCachedResponse() {
+                    apply(cached, animated: false)
+                }
+            } catch {
+                log.warning("cache load failed url=\(self.endpoint.absoluteString, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
+            }
+        }
 
         do {
             var request = URLRequest(url: endpoint)
@@ -64,20 +80,13 @@ where Entry.ID: Hashable {
             let decoder = JSONDecoder()
             decoder.dateDecodingStrategy = .iso8601
             let payload = try decoder.decode(Response.self, from: data)
-            let (newCount, newEntries) = extract(payload)
-            let filteredEntries = newEntries.filter {
-                !optimisticallyRemovedIDs.contains($0.id)
-            }
-            let hiddenCount = newEntries.count - filteredEntries.count
-            withAnimation(.smooth) {
-                entries = filteredEntries
-                count = max(0, newCount - hiddenCount)
-                lastError = nil
-                hasLoadedOnce = true
-                lastRefreshedAt = Date()
+            apply(payload, animated: true)
+            lastError = nil
+            if let saveResponse {
+                try? await saveResponse(payload)
             }
             let ms = (ContinuousClock.now - started) / .milliseconds(1)
-            log.debug("load ok url=\(self.endpoint.absoluteString, privacy: .public) entries=\(newCount, privacy: .public) ms=\(ms, privacy: .public)")
+            log.debug("load ok url=\(self.endpoint.absoluteString, privacy: .public) entries=\(self.count, privacy: .public) ms=\(ms, privacy: .public)")
         } catch {
             lastError = error.localizedDescription
             log.error("load decode_or_io_error url=\(self.endpoint.absoluteString, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
@@ -86,6 +95,25 @@ where Entry.ID: Hashable {
         if showSpinner {
             await holdSpinner(since: started)
             isLoading = false
+        }
+    }
+
+    private func apply(_ payload: Response, animated: Bool) {
+        let (newCount, newEntries) = extract(payload)
+        let filteredEntries = newEntries.filter {
+            !optimisticallyRemovedIDs.contains($0.id)
+        }
+        let hiddenCount = newEntries.count - filteredEntries.count
+        let update = {
+            self.entries = filteredEntries
+            self.count = max(0, newCount - hiddenCount)
+            self.hasLoadedOnce = true
+            self.lastRefreshedAt = Date()
+        }
+        if animated {
+            withAnimation(.smooth) { update() }
+        } else {
+            update()
         }
     }
 
