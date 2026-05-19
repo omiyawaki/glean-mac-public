@@ -157,6 +157,47 @@ final class PDFViewerTests: XCTestCase {
         XCTAssertEqual(thumbnailBackground, PDFDarkModePalette.pageBackgroundLevel, accuracy: 0.08)
     }
 
+    @MainActor
+    func testThumbnailSidebarScalesThumbnailsWhenSidebarWidens() throws {
+        let url = try makeImplicitBackgroundPDF()
+        let document = try XCTUnwrap(PDFDocument(url: url))
+        let view = PDFThumbnailSplitView(configuration: .previewLike)
+        view.frame = NSRect(x: 0, y: 0, width: 800, height: 500)
+
+        view.setDocument(document)
+        view.layoutSubtreeIfNeeded()
+        let defaultItem = try XCTUnwrap(view.thumbnailView.thumbnailItems.first)
+        let defaultWidth = defaultItem.bounds.width
+
+        view.splitView.setPosition(540, ofDividerAt: 0)
+        view.layoutSubtreeIfNeeded()
+        let wideItem = try XCTUnwrap(view.thumbnailView.thumbnailItems.first)
+
+        XCTAssertGreaterThan(wideItem.bounds.width, defaultWidth + 60)
+    }
+
+    @MainActor
+    func testThumbnailSidebarRendersRetinaImageForWideSidebar() throws {
+        let url = try makeImplicitBackgroundPDF()
+        let delegate = DarkPageDelegate()
+        let document = try XCTUnwrap(PDFDocument(url: url))
+        document.delegate = delegate
+        let view = PDFThumbnailSplitView(configuration: .previewLike)
+        view.frame = NSRect(x: 0, y: 0, width: 800, height: 500)
+
+        view.setDocument(document)
+        view.splitView.setPosition(540, ofDividerAt: 0)
+        view.setThumbnailDarkMode(true)
+        view.layoutSubtreeIfNeeded()
+
+        let item = try XCTUnwrap(view.thumbnailView.thumbnailItems.first)
+        let image = try XCTUnwrap(item.thumbnailImage)
+        let cgImage = try XCTUnwrap(image.cgImage(forProposedRect: nil, context: nil, hints: nil))
+        let displayWidth = item.bounds.width - 32
+
+        XCTAssertGreaterThanOrEqual(cgImage.width, Int(ceil(displayWidth * 2)))
+    }
+
     private final class DarkPageDelegate: NSObject, PDFDocumentDelegate {
         func classForPage() -> AnyClass {
             InvertedPDFPage.self

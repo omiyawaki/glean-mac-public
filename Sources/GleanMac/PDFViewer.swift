@@ -200,6 +200,10 @@ final class PDFThumbnailSplitView: NSView, NSSplitViewDelegate {
 
         thumbnailView.pdfView = pdfView
         thumbnailView.thumbnailSize = configuration.thumbnailSize
+        thumbnailView.maximumThumbnailWidth = max(
+            configuration.thumbnailSize.width,
+            configuration.maximumWidth - PDFThumbnailSidebarView.sidebarHorizontalMargin
+        )
         thumbnailView.allowsDragging = false
         thumbnailView.allowsMultipleSelection = false
         thumbnailView.backgroundColor = .clear
@@ -241,6 +245,8 @@ final class PDFThumbnailSplitView: NSView, NSSplitViewDelegate {
 
 @MainActor
 final class PDFThumbnailSidebarView: NSScrollView {
+    static let sidebarHorizontalMargin: CGFloat = 64
+
     weak var pdfView: PDFView? {
         didSet {
             if oldValue !== pdfView {
@@ -251,6 +257,10 @@ final class PDFThumbnailSidebarView: NSScrollView {
     }
 
     var thumbnailSize = CGSize(width: 96, height: 128) {
+        didSet { reloadThumbnails() }
+    }
+
+    var maximumThumbnailWidth: CGFloat = 196 {
         didSet { reloadThumbnails() }
     }
 
@@ -268,6 +278,12 @@ final class PDFThumbnailSidebarView: NSScrollView {
     private(set) var thumbnailItems: [PDFThumbnailItemView] = []
 
     private let stackView = NSStackView()
+    private var lastRenderedThumbnailWidth: CGFloat = 0
+
+    override func layout() {
+        super.layout()
+        reloadThumbnailsIfWidthChanged()
+    }
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -288,12 +304,16 @@ final class PDFThumbnailSidebarView: NSScrollView {
         thumbnailItems.removeAll()
 
         guard let document = pdfView?.document else { return }
+        let thumbnailWidth = currentThumbnailWidth()
+        lastRenderedThumbnailWidth = thumbnailWidth
+        let renderScale = max(2, window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2)
         for index in 0..<document.pageCount {
             guard let page = document.page(at: index) else { continue }
             let item = PDFThumbnailItemView(
                 page: page,
                 pageIndex: index,
-                thumbnailSize: thumbnailSize
+                thumbnailSize: thumbnailDisplaySize(for: page, width: thumbnailWidth),
+                renderScale: renderScale
             )
             item.target = self
             item.action = #selector(selectThumbnail(_:))
@@ -354,6 +374,39 @@ final class PDFThumbnailSidebarView: NSScrollView {
         }
         thumbnailItems.forEach { $0.isSelected = $0.page === currentPage }
     }
+
+    private func reloadThumbnailsIfWidthChanged() {
+        guard pdfView?.document != nil else { return }
+        let thumbnailWidth = currentThumbnailWidth()
+        guard abs(thumbnailWidth - lastRenderedThumbnailWidth) > 0.5 else { return }
+        reloadThumbnails()
+    }
+
+    private func currentThumbnailWidth() -> CGFloat {
+        let containerWidth = contentView.bounds.width > 0
+            ? contentView.bounds.width
+            : bounds.width
+        guard containerWidth > 0 else {
+            return thumbnailSize.width
+        }
+
+        let minimumThumbnailWidth = max(64, thumbnailSize.width * 0.75)
+        return min(
+            maximumThumbnailWidth,
+            max(minimumThumbnailWidth, containerWidth - Self.sidebarHorizontalMargin)
+        )
+    }
+
+    private func thumbnailDisplaySize(for page: PDFPage, width: CGFloat) -> CGSize {
+        let pageBounds = page.bounds(for: .cropBox)
+        guard pageBounds.width > 0, pageBounds.height > 0 else {
+            return CGSize(
+                width: width,
+                height: width * thumbnailSize.height / thumbnailSize.width
+            )
+        }
+        return CGSize(width: width, height: width * pageBounds.height / pageBounds.width)
+    }
 }
 
 @MainActor
@@ -372,7 +425,7 @@ final class PDFThumbnailItemView: NSControl {
     private let imageView = NSImageView()
     private let label = NSTextField(labelWithString: "")
 
-    init(page: PDFPage, pageIndex: Int, thumbnailSize: CGSize) {
+    init(page: PDFPage, pageIndex: Int, thumbnailSize: CGSize, renderScale: CGFloat = 2) {
         self.page = page
         self.pageIndex = pageIndex
         super.init(frame: NSRect(
@@ -381,7 +434,7 @@ final class PDFThumbnailItemView: NSControl {
             width: thumbnailSize.width + 32,
             height: thumbnailSize.height + 28
         ))
-        configureViews(thumbnailSize: thumbnailSize)
+        configureViews(thumbnailSize: thumbnailSize, renderScale: renderScale)
     }
 
     @available(*, unavailable)
@@ -400,12 +453,17 @@ final class PDFThumbnailItemView: NSControl {
         bounds.insetBy(dx: 4, dy: 2).fill()
     }
 
-    private func configureViews(thumbnailSize: CGSize) {
+    private func configureViews(thumbnailSize: CGSize, renderScale: CGFloat) {
         translatesAutoresizingMaskIntoConstraints = false
         imageView.translatesAutoresizingMaskIntoConstraints = false
         label.translatesAutoresizingMaskIntoConstraints = false
 
-        imageView.image = page.thumbnail(of: thumbnailSize, for: .cropBox)
+        imageView.image = PDFThumbnailRasterizer.thumbnail(
+            page: page,
+            displaySize: thumbnailSize,
+            box: .cropBox,
+            renderScale: renderScale
+        ) ?? page.thumbnail(of: thumbnailSize, for: .cropBox)
         imageView.imageAlignment = .alignCenter
         imageView.imageScaling = .scaleProportionallyUpOrDown
         imageView.wantsLayer = true
@@ -435,6 +493,62 @@ final class PDFThumbnailItemView: NSControl {
             label.trailingAnchor.constraint(equalTo: trailingAnchor),
             label.topAnchor.constraint(equalTo: imageView.bottomAnchor, constant: 6)
         ])
+    }
+}
+
+enum PDFThumbnailRasterizer {
+    static func thumbnail(
+        page: PDFPage,
+        displaySize: CGSize,
+        box: PDFDisplayBox,
+        renderScale: CGFloat
+    ) -> NSImage? {
+        let pixelWidth = max(1, Int(ceil(displaySize.width * renderScale)))
+        let pixelHeight = max(1, Int(ceil(displaySize.height * renderScale)))
+        let pageBounds = page.bounds(for: box)
+        guard pageBounds.width > 0, pageBounds.height > 0 else {
+            return nil
+        }
+
+        let pageScale = min(
+            CGFloat(pixelWidth) / pageBounds.width,
+            CGFloat(pixelHeight) / pageBounds.height
+        )
+        let scaledSize = CGSize(
+            width: pageBounds.width * pageScale,
+            height: pageBounds.height * pageScale
+        )
+        let drawOrigin = CGPoint(
+            x: (CGFloat(pixelWidth) - scaledSize.width) / 2,
+            y: (CGFloat(pixelHeight) - scaledSize.height) / 2
+        )
+        let bitmapInfo = CGImageAlphaInfo.premultipliedLast.rawValue
+        guard let context = CGContext(
+            data: nil,
+            width: pixelWidth,
+            height: pixelHeight,
+            bitsPerComponent: 8,
+            bytesPerRow: pixelWidth * 4,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: bitmapInfo
+        ) else {
+            return nil
+        }
+
+        context.clear(CGRect(x: 0, y: 0, width: pixelWidth, height: pixelHeight))
+        context.saveGState()
+        context.translateBy(x: drawOrigin.x, y: drawOrigin.y)
+        context.scaleBy(x: pageScale, y: pageScale)
+        context.translateBy(x: -pageBounds.minX, y: -pageBounds.minY)
+        context.setFillColor(NSColor.white.cgColor)
+        context.fill(pageBounds)
+        page.draw(with: box, to: context)
+        context.restoreGState()
+
+        guard let image = context.makeImage() else {
+            return nil
+        }
+        return NSImage(cgImage: image, size: displaySize)
     }
 }
 
@@ -474,50 +588,12 @@ final class InvertedPDFPage: PDFPage {
     }
 
     override func thumbnail(of size: CGSize, for box: PDFDisplayBox) -> NSImage {
-        let pixelWidth = max(1, Int(ceil(size.width)))
-        let pixelHeight = max(1, Int(ceil(size.height)))
-        let pageBounds = bounds(for: box)
-        guard pageBounds.width > 0, pageBounds.height > 0 else {
-            return super.thumbnail(of: size, for: box)
-        }
-
-        let scale = min(
-            CGFloat(pixelWidth) / pageBounds.width,
-            CGFloat(pixelHeight) / pageBounds.height
-        )
-        let scaledSize = CGSize(
-            width: pageBounds.width * scale,
-            height: pageBounds.height * scale
-        )
-        let drawOrigin = CGPoint(
-            x: (CGFloat(pixelWidth) - scaledSize.width) / 2,
-            y: (CGFloat(pixelHeight) - scaledSize.height) / 2
-        )
-        let bitmapInfo = CGImageAlphaInfo.premultipliedLast.rawValue
-        guard let context = CGContext(
-            data: nil,
-            width: pixelWidth,
-            height: pixelHeight,
-            bitsPerComponent: 8,
-            bytesPerRow: pixelWidth * 4,
-            space: CGColorSpaceCreateDeviceRGB(),
-            bitmapInfo: bitmapInfo
-        ) else {
-            return super.thumbnail(of: size, for: box)
-        }
-
-        context.clear(CGRect(x: 0, y: 0, width: pixelWidth, height: pixelHeight))
-        context.saveGState()
-        context.translateBy(x: drawOrigin.x, y: drawOrigin.y)
-        context.scaleBy(x: scale, y: scale)
-        context.translateBy(x: -pageBounds.minX, y: -pageBounds.minY)
-        draw(with: box, to: context)
-        context.restoreGState()
-
-        guard let image = context.makeImage() else {
-            return super.thumbnail(of: size, for: box)
-        }
-        return NSImage(cgImage: image, size: size)
+        PDFThumbnailRasterizer.thumbnail(
+            page: self,
+            displaySize: size,
+            box: box,
+            renderScale: 2
+        ) ?? super.thumbnail(of: size, for: box)
     }
 }
 
