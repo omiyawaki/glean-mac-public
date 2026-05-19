@@ -28,3 +28,30 @@ enum SidebarPaneVisibility {
         item == selection
     }
 }
+
+enum SidebarLaunchSelection {
+    enum LoadState: Equatable {
+        case notLoaded
+        case loaded(count: Int)
+    }
+
+    static func preferredItem(
+        backlog: LoadState,
+        review: LoadState,
+        authors: LoadState
+    ) -> SidebarItem {
+        if shouldShow(backlog) { return .backlog }
+        if shouldShow(review) { return .maybeReview }
+        if shouldShow(authors) { return .authorProposals }
+        return .libraryAll
+    }
+
+    private static func shouldShow(_ state: LoadState) -> Bool {
+        switch state {
+        case .notLoaded:
+            return true
+        case .loaded(let count):
+            return count > 0
+        }
+    }
+}

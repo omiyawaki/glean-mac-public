@@ -36,6 +36,7 @@ struct ContentView: View {
     @State private var librarySelection: String?
     @State private var libraryQuery = ""
     @State private var inspectorPresented = false
+    @State private var didApplyLaunchSelection = false
     @State private var mountedSidebarItems = MountedSidebarItems(initial: .backlog)
     @State private var now = Date()
 
@@ -97,6 +98,12 @@ struct ContentView: View {
             let review = reviewStore
             let author = authorStore
             let library = libraryStore
+            registerIntrospection()
+            async let initialBacklog: Void = backlog.load(silent: true)
+            async let initialReview: Void = review.load(silent: true)
+            async let initialAuthor: Void = author.load(silent: true)
+            _ = await (initialBacklog, initialReview, initialAuthor)
+            applyLaunchSelectionIfNeeded()
             let stream = EventStream(url: Self.eventsURL) { event in
                 switch event {
                 case "intake-changed":
@@ -113,8 +120,6 @@ struct ContentView: View {
             }
             stream.start()
             eventStream = stream
-
-            registerIntrospection()
         }
         .onChange(of: selection) { _, newSelection in
             mountedSidebarItems.select(newSelection)
@@ -351,6 +356,24 @@ struct ContentView: View {
 
     private func shouldMount(_ item: SidebarItem) -> Bool {
         mountedSidebarItems.contains(item) || selection == item
+    }
+
+    private func applyLaunchSelectionIfNeeded() {
+        guard !didApplyLaunchSelection, selection == .backlog else { return }
+        let preferredItem = SidebarLaunchSelection.preferredItem(
+            backlog: loadState(backlogStore),
+            review: loadState(reviewStore),
+            authors: loadState(authorStore)
+        )
+        didApplyLaunchSelection = true
+        selection = preferredItem
+        mountedSidebarItems.select(preferredItem)
+    }
+
+    private func loadState<Entry, Response>(
+        _ store: IntakeStore<Entry, Response>
+    ) -> SidebarLaunchSelection.LoadState {
+        store.hasLoadedOnce ? .loaded(count: store.count) : .notLoaded
     }
 
     @ViewBuilder
