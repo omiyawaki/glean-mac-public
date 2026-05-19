@@ -63,6 +63,27 @@ final class PendingOperationSyncWorkerTests: XCTestCase {
         XCTAssertEqual(store.operations.first?.errorMessage, "Duplicate DOI")
     }
 
+    func testSyncRequeuesStaleRunningOperationBeforeSubmitting() async throws {
+        let store = PendingOperationStore(url: tempURL())
+        let operation = try await store.enqueue(.reviewAdd(doi: "10.1000/stale"))
+        try await store.markRunning(id: operation.id,
+                                    now: Date(timeIntervalSince1970: 0))
+        var submitted: [UUID] = []
+        let worker = PendingOperationSyncWorker(
+            store: store,
+            staleRunningInterval: 300,
+            now: { Date(timeIntervalSince1970: 1_000) }
+        ) { operation in
+            submitted.append(operation.id)
+            return .synced
+        }
+
+        await worker.syncPending()
+
+        XCTAssertEqual(submitted, [operation.id])
+        XCTAssertEqual(store.operations.first?.status, .synced)
+    }
+
     private func tempURL() -> URL {
         FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString)

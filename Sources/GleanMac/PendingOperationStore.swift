@@ -33,6 +33,7 @@ final class PendingOperationStore {
     var operations: [PendingOperation] = []
 
     private let url: URL
+    static let defaultStaleRunningInterval: TimeInterval = 20 * 60
 
     static var `default`: PendingOperationStore {
         PendingOperationStore(url: defaultURL)
@@ -89,11 +90,11 @@ final class PendingOperationStore {
         return operation
     }
 
-    func markRunning(id: UUID) async throws {
+    func markRunning(id: UUID, now: Date = Date()) async throws {
         try await update(id: id) { operation in
             operation.status = .running
             operation.errorMessage = nil
-            operation.updatedAt = Date()
+            operation.updatedAt = now
         }
     }
 
@@ -118,6 +119,25 @@ final class PendingOperationStore {
             operation.status = .failed
             operation.errorMessage = message
             operation.updatedAt = Date()
+        }
+    }
+
+    func requeueStaleRunningOperations(
+        now: Date = Date(),
+        olderThan interval: TimeInterval = defaultStaleRunningInterval
+    ) async throws {
+        var didChange = false
+        for index in operations.indices where operations[index].status == .running {
+            guard now.timeIntervalSince(operations[index].updatedAt) >= interval else {
+                continue
+            }
+            operations[index].status = .queued
+            operations[index].errorMessage = nil
+            operations[index].updatedAt = now
+            didChange = true
+        }
+        if didChange {
+            try await save()
         }
     }
 

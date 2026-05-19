@@ -32,6 +32,26 @@ final class PendingOperationStoreTests: XCTestCase {
         XCTAssertEqual(pendingIDs, [queued.id, failed.id])
     }
 
+    func testRecoverStaleRunningOperationsRequeuesOnlyExpiredRuns() async throws {
+        let store = PendingOperationStore(url: tempURL())
+        let fresh = try await store.enqueue(.reviewAdd(doi: "10.1000/fresh"),
+                                            createdAt: Date(timeIntervalSince1970: 100))
+        let stale = try await store.enqueue(.reviewAdd(doi: "10.1000/stale"),
+                                            createdAt: Date(timeIntervalSince1970: 100))
+        try await store.markRunning(id: fresh.id, now: Date(timeIntervalSince1970: 900))
+        try await store.markRunning(id: stale.id, now: Date(timeIntervalSince1970: 0))
+
+        try await store.requeueStaleRunningOperations(
+            now: Date(timeIntervalSince1970: 1_000),
+            olderThan: 300
+        )
+
+        let statuses = Dictionary(uniqueKeysWithValues: store.operations.map { ($0.id, $0.status) })
+        XCTAssertEqual(statuses[fresh.id], .running)
+        XCTAssertEqual(statuses[stale.id], .queued)
+        XCTAssertEqual(store.pendingOperations.map(\.id), [stale.id])
+    }
+
     func testMarkFailedPersistsErrorForRetryAfterRelaunch() async throws {
         let url = tempURL()
         let store = PendingOperationStore(url: url)

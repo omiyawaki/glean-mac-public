@@ -24,7 +24,7 @@ final class IntakeActionsTests: XCTestCase {
         try await IntakeActions.reviewAdd(doi: "10.1002/qj.70192")
 
         let timeout = try XCTUnwrap(capture.timeoutInterval)
-        XCTAssertEqual(timeout, 150, accuracy: 0.001)
+        XCTAssertEqual(timeout, 660, accuracy: 0.001)
     }
 
     func testSubmitReviewAddSendsOperationIDHeader() async throws {

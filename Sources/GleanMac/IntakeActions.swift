@@ -7,7 +7,7 @@ import Foundation
 enum IntakeActions {
     private static let baseURL = URL(string: "http://backend.example.com:8765")!
     private static let defaultPostTimeout: TimeInterval = 30
-    private static let reviewAddTimeout: TimeInterval = 150
+    private static let reviewAddTimeout: TimeInterval = 660
 
     enum ActionError: Error, LocalizedError {
         case http(Int, String)
