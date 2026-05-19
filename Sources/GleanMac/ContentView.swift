@@ -54,6 +54,7 @@ struct ContentView: View {
     private static let eventsURL = URL(
         string: "http://backend.example.com:8765/events"
     )!
+    private let backlogPDFManualFetcher = BacklogPDFManualFetcher()
     private let ticker = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
 
     var body: some View {
@@ -247,6 +248,7 @@ struct ContentView: View {
                             actionQueue: actionQueue,
                             offlineCoordinator: offlineCoordinator,
                             syncPendingOperations: syncPendingOperations,
+                            retryPDF: retryBacklogPDF,
                             selection: $backlogSelection)
                     .sidebarPane(.backlog, selection: selection)
             }
@@ -392,6 +394,7 @@ struct ContentView: View {
                 actionQueue: actionQueue,
                 offlineCoordinator: offlineCoordinator,
                 syncPendingOperations: syncPendingOperations,
+                retryPDF: retryBacklogPDF,
                 inspectorPresented: $inspectorPresented
             )
         case .maybeReview, .authorProposals, .none:
@@ -425,6 +428,11 @@ struct ContentView: View {
 
     private var offlineCoordinator: OfflineIntakeCoordinator {
         OfflineIntakeCoordinator(operationStore: operationStore)
+    }
+
+    private func retryBacklogPDF(_ entry: BacklogEntry, isAlreadySelected: Bool) async {
+        await backlogPDFManualFetcher.fetchPDF(for: entry,
+                                               isAlreadySelected: isAlreadySelected)
     }
 
     private func syncPendingOperations() async {

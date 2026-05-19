@@ -5,6 +5,7 @@ struct BacklogView: View {
     let actionQueue: ActionQueueStore
     let offlineCoordinator: OfflineIntakeCoordinator
     let syncPendingOperations: () async -> Void
+    let retryPDF: (BacklogEntry, Bool) async -> Void
     @Binding var selection: String?
 
     var body: some View {
@@ -30,6 +31,10 @@ struct BacklogView: View {
                                        onDropPDFs: { urls in
                                            enqueueForceAttach(urls: urls,
                                                               citekey: entry.citekey)
+                                       },
+                                       onTryFetchingPDF: {
+                                           let isAlreadySelected = selection == entry.id
+                                           Task { await retryPDF(entry, isAlreadySelected) }
                                        })
                                 .tag(entry.id)
                         }
@@ -109,6 +114,7 @@ private func trashSourcePDF(_ url: URL) {
 private struct BacklogRow: View {
     let entry: BacklogEntry
     let onDropPDFs: ([URL]) -> Void
+    let onTryFetchingPDF: () -> Void
     @State private var isDropTargeted = false
 
     var body: some View {
@@ -140,6 +146,15 @@ private struct BacklogRow: View {
                               lineWidth: 1.5)
         )
         .contentShape(Rectangle())
+        .contextMenu {
+            Button {
+                onTryFetchingPDF()
+            } label: {
+                Label(BacklogPDFManualFetchPresentation.menuTitle,
+                      systemImage: BacklogPDFManualFetchPresentation.systemImage)
+            }
+            .disabled(!BacklogPDFManualFetchPresentation.isAvailable(for: entry))
+        }
         .dropDestination(for: URL.self) { urls, _ in
             onDropPDFs(urls)
             return urls.contains { $0.pathExtension.lowercased() == "pdf" }

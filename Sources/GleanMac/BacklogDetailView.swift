@@ -6,9 +6,11 @@ struct BacklogDetailView: View {
     let actionQueue: ActionQueueStore
     let offlineCoordinator: OfflineIntakeCoordinator
     let syncPendingOperations: () async -> Void
+    let retryPDF: (BacklogEntry, Bool) async -> Void
     @Binding var inspectorPresented: Bool
     @State private var actionError: String?
     @State private var showError = false
+    @State private var isRetryingPDF = false
 
     var body: some View {
         Group {
@@ -51,6 +53,24 @@ struct BacklogDetailView: View {
             }
         }
         .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    guard let entry else { return }
+                    Task {
+                        isRetryingPDF = true
+                        defer { isRetryingPDF = false }
+                        await retryPDF(entry, true)
+                    }
+                } label: {
+                    Label(BacklogPDFManualFetchPresentation.toolbarTitle,
+                          systemImage: BacklogPDFManualFetchPresentation.systemImage)
+                }
+                .help("Try fetching this paper's PDF in the current WebView")
+                .disabled(
+                    !BacklogPDFManualFetchPresentation.isAvailable(for: entry) ||
+                    isRetryingPDF
+                )
+            }
             ToolbarItem(placement: .primaryAction) {
                 Button {
                     if let entry, let url = doiURL(for: entry) {
