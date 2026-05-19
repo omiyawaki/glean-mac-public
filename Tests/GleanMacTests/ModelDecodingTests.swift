@@ -25,6 +25,9 @@ final class ModelDecodingTests: XCTestCase {
               "citekey": "Hay2025Impact",
               "doi": "10.1002/qj.70012",
               "last_attempt_at": "2026-04-24T19:47:00Z",
+              "missing_attachment_paths": ["attachments/missing.pdf"],
+              "source": "glean",
+              "state": "attachment_file_missing",
               "title": "The impact of Arctic sea-ice loss",
               "tried": []
             },
@@ -45,7 +48,13 @@ final class ModelDecodingTests: XCTestCase {
         XCTAssertEqual(payload.entries[0].citekey, "Hay2025Impact")
         XCTAssertEqual(payload.entries[0].doi, "10.1002/qj.70012")
         XCTAssertNotNil(payload.entries[0].lastAttemptAt)
+        XCTAssertEqual(payload.entries[0].state, .attachmentFileMissing)
+        XCTAssertEqual(payload.entries[0].source, "glean")
+        XCTAssertEqual(payload.entries[0].missingAttachmentPaths, ["attachments/missing.pdf"])
+        XCTAssertEqual(payload.entries[0].statusText, "Attachment file missing")
         XCTAssertNil(payload.entries[1].lastAttemptAt)
+        XCTAssertEqual(payload.entries[1].state, .unknown)
+        XCTAssertEqual(payload.entries[1].statusText, "Manual retrieval needed")
         XCTAssertEqual(payload.entries[1].tried, ["https://example.com/x"])
     }
 

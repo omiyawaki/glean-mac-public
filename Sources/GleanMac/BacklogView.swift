@@ -124,6 +124,9 @@ private struct BacklogRow: View {
                     .font(.subheadline)
                     .foregroundStyle(.tertiary)
             }
+            Text(entry.statusText)
+                .font(.caption)
+                .foregroundStyle(statusStyle)
         }
         .padding(.vertical, 2)
         .padding(.horizontal, 6)
@@ -141,5 +144,14 @@ private struct BacklogRow: View {
             onDropPDFs(urls)
             return urls.contains { $0.pathExtension.lowercased() == "pdf" }
         } isTargeted: { isDropTargeted = $0 }
+    }
+
+    private var statusStyle: HierarchicalShapeStyle {
+        switch entry.state {
+        case .automatedFetchFailed, .attachmentFileMissing:
+            .secondary
+        default:
+            .tertiary
+        }
     }
 }

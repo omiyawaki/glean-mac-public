@@ -3,12 +3,30 @@ import Foundation
 // MARK: - Backlog
 
 struct BacklogEntry: Codable, Identifiable, Hashable {
+    enum State: String, Codable {
+        case missingPDF = "missing_pdf"
+        case automatedFetchPending = "automated_fetch_pending"
+        case automatedFetchFailed = "automated_fetch_failed"
+        case manualRetrievalNeeded = "manual_retrieval_needed"
+        case attachmentFileMissing = "attachment_file_missing"
+        case unknown
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.singleValueContainer()
+            let rawValue = try container.decode(String.self)
+            self = State(rawValue: rawValue) ?? .unknown
+        }
+    }
+
     let citekey: String
     let doi: String
     let title: String
     let addedAt: Date
     let lastAttemptAt: Date?
     let tried: [String]
+    let state: State
+    let source: String
+    let missingAttachmentPaths: [String]
 
     /// SwiftUI's List + ForEach require Identifiable rows to have
     /// unique IDs; identical IDs cause the list to render N copies of
@@ -22,10 +40,64 @@ struct BacklogEntry: Codable, Identifiable, Hashable {
     /// JSON key for the same entry.
     var id: String { doi.isEmpty ? "citekey:\(citekey)" : doi }
 
+    var statusText: String {
+        switch state {
+        case .missingPDF:
+            "Missing PDF"
+        case .automatedFetchPending:
+            "Fetch pending"
+        case .automatedFetchFailed:
+            "Fetch failed"
+        case .manualRetrievalNeeded:
+            "Manual retrieval needed"
+        case .attachmentFileMissing:
+            "Attachment file missing"
+        case .unknown:
+            tried.isEmpty ? "Missing PDF" : "Manual retrieval needed"
+        }
+    }
+
+    init(citekey: String,
+         doi: String,
+         title: String,
+         addedAt: Date,
+         lastAttemptAt: Date?,
+         tried: [String],
+         state: State = .unknown,
+         source: String = "",
+         missingAttachmentPaths: [String] = []) {
+        self.citekey = citekey
+        self.doi = doi
+        self.title = title
+        self.addedAt = addedAt
+        self.lastAttemptAt = lastAttemptAt
+        self.tried = tried
+        self.state = state
+        self.source = source
+        self.missingAttachmentPaths = missingAttachmentPaths
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        citekey = try container.decode(String.self, forKey: .citekey)
+        doi = try container.decode(String.self, forKey: .doi)
+        title = try container.decode(String.self, forKey: .title)
+        addedAt = try container.decode(Date.self, forKey: .addedAt)
+        lastAttemptAt = try container.decodeIfPresent(Date.self, forKey: .lastAttemptAt)
+        tried = try container.decodeIfPresent([String].self, forKey: .tried) ?? []
+        state = try container.decodeIfPresent(State.self, forKey: .state) ?? .unknown
+        source = try container.decodeIfPresent(String.self, forKey: .source) ?? ""
+        missingAttachmentPaths = try container.decodeIfPresent(
+            [String].self,
+            forKey: .missingAttachmentPaths
+        ) ?? []
+    }
+
     enum CodingKeys: String, CodingKey {
-        case citekey, doi, title, tried
+        case citekey, doi, title, tried, state, source
         case addedAt = "added_at"
         case lastAttemptAt = "last_attempt_at"
+        case missingAttachmentPaths = "missing_attachment_paths"
     }
 }
 
@@ -143,4 +215,3 @@ struct LibraryRecord: Codable, Hashable, Identifiable {
         case modifiedAt = "modified_at"
     }
 }
-

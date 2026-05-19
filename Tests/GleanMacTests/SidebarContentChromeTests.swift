@@ -53,7 +53,7 @@ final class SidebarContentChromeTests: XCTestCase {
                 lastRefreshedAt: nil,
                 now: now
             ),
-            "1 paper awaiting PDF"
+            "Global: 1 paper awaiting PDF"
         )
         XCTAssertEqual(
             SidebarContentChrome.maybeReviewSubtitle(

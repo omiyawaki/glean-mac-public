@@ -40,8 +40,8 @@ enum SidebarContentChrome {
     ) -> String {
         guard hasLoadedOnce else { return "" }
         let countPart = count == 1
-            ? "1 paper awaiting PDF"
-            : "\(count) papers awaiting PDFs"
+            ? "Global: 1 paper awaiting PDF"
+            : "Global: \(count) papers awaiting PDFs"
         return subtitle(countPart: countPart, lastRefreshedAt: lastRefreshedAt, now: now)
     }
 
