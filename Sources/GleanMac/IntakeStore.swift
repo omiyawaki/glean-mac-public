@@ -167,10 +167,15 @@ enum Stores {
         )
     }
 
-    static func library() -> IntakeStore<LibraryEntry, LibraryResponse> {
+    static func library(
+        snapshotCache: LibrarySnapshotCache = .default
+    ) -> IntakeStore<LibraryEntry, LibraryResponse> {
         IntakeStore(
             endpoint: libraryBase.appendingPathComponent("/api/papers"),
             timeoutInterval: 15,
+            minSpinnerDuration: .milliseconds(0),
+            loadCachedResponse: { try await snapshotCache.load() },
+            saveResponse: { try await snapshotCache.save($0) },
             extract: { ($0.count, $0.entries) }
         )
     }

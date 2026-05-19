@@ -143,6 +143,39 @@ final class IntakeStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testLibraryFactoryLoadsCachedSnapshotBeforeNetworkFailure() async throws {
+        MockURLProtocol.requestHandler = { request in
+            let response = HTTPURLResponse(
+                url: request.url!, statusCode: 503,
+                httpVersion: nil, headerFields: nil
+            )!
+            return (response, Data())
+        }
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let cache = LibrarySnapshotCache(
+            url: directory.appendingPathComponent("library.json")
+        )
+        try await cache.save(LibraryResponse(count: 1, entries: [
+            LibraryEntry(
+                citekey: "Cached2026Library",
+                title: "Cached library paper",
+                year: 2026,
+                doi: nil,
+                authors: []
+            )
+        ]))
+
+        let store = Stores.library(snapshotCache: cache)
+
+        await store.load()
+
+        XCTAssertTrue(store.hasLoadedOnce)
+        XCTAssertEqual(store.entries.map(\.citekey), ["Cached2026Library"])
+        XCTAssertEqual(store.lastError, "HTTP 503")
+    }
+
+    @MainActor
     func testSecondLoadKeepsExistingEntriesUntilNewArrives() async {
         // First load: succeed with one entry.
         MockURLProtocol.requestHandler = { request in
