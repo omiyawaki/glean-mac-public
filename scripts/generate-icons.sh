@@ -18,7 +18,7 @@ if [[ ! -d "$ICON_DOC" ]]; then
     exit 1
 fi
 
-swift run --package-path "$TOOL_REPO" -c release icon-composer-build build \
+swift run --package-path "$TOOL_REPO" -c release apple-app-tools icon build \
     --icon "$ICON_DOC" \
     --name AppIcon \
     --out "$REPO/Resources" \
