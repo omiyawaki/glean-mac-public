@@ -6,10 +6,10 @@ REPO="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO"
 
 ICON_DOC="$REPO/Resources/AppIcon.icon"
-TOOL_REPO="${ICON_COMPOSER_BUILD_REPO:-$REPO/../icon-composer-build}"
+TOOL_REPO="${APPLE_APP_TOOLS_REPO:-$REPO/../apple-app-tools}"
 
 if [[ ! -d "$TOOL_REPO" ]]; then
-    echo "icon-composer-build repo not found at: $TOOL_REPO" >&2
+    echo "apple-app-tools repo not found at: $TOOL_REPO" >&2
     exit 1
 fi
 
