@@ -6,7 +6,7 @@ REPO="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO"
 
 ICON_DOC="$REPO/Resources/AppIcon.icon"
-TOOL_REPO="${APPLE_APP_TOOLS_REPO:-$REPO/../apple-app-tools}"
+TOOL_REPO="${APPLE_APP_TOOLS_REPO:-$HOME/tools/apple-app-tools}"
 
 if [[ ! -d "$TOOL_REPO" ]]; then
     echo "apple-app-tools repo not found at: $TOOL_REPO" >&2
