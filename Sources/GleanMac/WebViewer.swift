@@ -22,7 +22,7 @@ struct WebViewer: NSViewRepresentable {
 
     func makeNSView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
-        config.websiteDataStore = .default()  // explicit; the default is persistent
+        config.websiteDataStore = GleanWebDataStore.websiteDataStore()
         config.defaultWebpagePreferences.allowsContentJavaScript = true
         Self.installDarkReader(in: config.userContentController)
 
