@@ -60,6 +60,10 @@ struct MaybeReviewView: View {
         }
     }
 
+    /// Perform an Add or Skip. The optimistic removal + post-mutation
+    /// loadAfterLocalMutation pattern (combined with auto-pruning in
+    /// IntakeStore.apply) is the root fix for the previous flash-reappear
+    /// race and the "stuck hidden on failure" correctness hole.
     @MainActor
     private func perform(_ kind: Kind, entry: ReviewEntry) {
         let id = entry.id
@@ -70,14 +74,33 @@ struct MaybeReviewView: View {
             systemImage: kind.systemImage
         ) {
             store.optimisticallyRemove(id: id)
-            switch kind {
-            case .add:
-                try await offlineCoordinator.queueReviewAdd(doi: entry.doi)
-            case .skip:
-                try await offlineCoordinator.queueReviewSkip(doi: entry.doi)
+            do {
+                switch kind {
+                case .add:
+                    try await offlineCoordinator.queueReviewAdd(doi: entry.doi)
+                case .skip:
+                    try await offlineCoordinator.queueReviewSkip(doi: entry.doi)
+                }
+                await syncPendingOperations()
+
+                // Root fix for the reappearance flash: after the server has
+                // committed the removal, immediately load the authoritative
+                // state. The apply() auto-pruning will clean up the optimistic
+                // guard, and we get the final correct list without waiting
+                // for the 0.5 s watcher + SSE roundtrip.
+                await store.loadAfterLocalMutation(silent: true)
+
+                // Harmless on success (the prune already did the work), but
+                // keeps the call sites consistent and explicit.
+                store.releaseOptimisticRemoval(id: id)
+            } catch {
+                // Failure: the server never removed the entry. Restore
+                // visibility immediately so the user can see it and retry
+                // via the action queue.
+                store.releaseOptimisticRemoval(id: id)
+                await store.load(silent: true)
+                throw error
             }
-            store.releaseOptimisticRemoval(id: id)
-            await syncPendingOperations()
         }
     }
 

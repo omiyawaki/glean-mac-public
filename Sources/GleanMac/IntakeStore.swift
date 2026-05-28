@@ -11,6 +11,14 @@ private let log = Logger(subsystem: "com.miyawaki.glean-mac", category: "intake-
 /// in their endpoint URL and entry type — everything else (load
 /// state machine, spinner floor, smooth row diffing, last-refresh
 /// timestamp) is identical and lives here.
+///
+/// Optimistic removals (used by Maybe Review and Author Proposals for
+/// instant "Add/Skip/Follow/Dismiss" feedback) are automatically
+/// released ("self-healing") when a subsequent server payload no
+/// longer contains the ID. This eliminates timing races between
+/// local release and the next event-driven or manual load. Callers
+/// must still explicitly clear the protection (and reload) on error
+/// paths so that failed mutations do not leave rows permanently hidden.
 @MainActor
 @Observable
 final class IntakeStore<Entry: Identifiable & Codable & Sendable, Response: Codable & Sendable>
@@ -123,6 +131,16 @@ where Entry.ID: Hashable {
 
     private func apply(_ payload: Response, animated: Bool) {
         let (newCount, newEntries) = extract(payload)
+
+        // Self-healing optimistic removal: if the authoritative server
+        // payload no longer lists an ID we were locally hiding, the
+        // mutation has landed (or the entry was otherwise removed, e.g.
+        // by reconcile). Drop it from the protection set so future
+        // loads are not affected. This is the key part of the root fix
+        // for the "flash reappear" race.
+        let serverIDs = Set(newEntries.map(\.id))
+        optimisticallyRemovedIDs = optimisticallyRemovedIDs.intersection(serverIDs)
+
         let filteredEntries = newEntries.filter {
             !optimisticallyRemovedIDs.contains($0.id)
         }
@@ -140,6 +158,12 @@ where Entry.ID: Hashable {
         }
     }
 
+    /// Immediately hide a row locally while a mutation (add/skip/follow/dismiss)
+    /// is in flight. The ID is protected across *all* subsequent loads (silent
+    /// or not) until either:
+    ///   - the server payload no longer contains it (auto-pruned in apply), or
+    ///   - the caller explicitly calls releaseOptimisticRemoval (primarily used
+    ///     on error paths to restore visibility).
     func optimisticallyRemove(id: Entry.ID) {
         optimisticallyRemovedIDs.insert(id)
         guard entries.contains(where: { $0.id == id }) else { return }
@@ -150,8 +174,21 @@ where Entry.ID: Hashable {
         }
     }
 
+    /// Explicitly stop protecting an ID. Primarily called on error paths
+    /// so that a failed mutation does not leave the row permanently hidden.
+    /// On success paths the auto-pruning in apply() is usually sufficient.
     func releaseOptimisticRemoval(id: Entry.ID) {
         optimisticallyRemovedIDs.remove(id)
+    }
+
+    /// Convenience for actions that just successfully mutated the
+    /// remote resource backing this store (e.g. review add/skip,
+    /// author follow/dismiss). Performs a silent load so the UI
+    /// receives the post-mutation truth as quickly as possible.
+    /// The apply() auto-pruning will then clean up any remaining
+    /// optimistic protection for IDs the server no longer lists.
+    func loadAfterLocalMutation(silent: Bool = true) async {
+        await load(silent: silent)
     }
 
     private func holdSpinner(since started: ContinuousClock.Instant) async {

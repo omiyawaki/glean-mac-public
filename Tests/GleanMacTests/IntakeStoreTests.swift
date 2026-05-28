@@ -328,6 +328,7 @@ final class IntakeStoreTests: XCTestCase {
 
     @MainActor
     func testOptimisticRemoveFiltersReloadUntilReleased() async {
+        // Initial payload contains both items.
         MockURLProtocol.requestHandler = { request in
             let body = """
             {"count":2,"entries":[
@@ -350,10 +351,64 @@ final class IntakeStoreTests: XCTestCase {
         XCTAssertEqual(store.entries.map(\.doi), ["10/b"])
         XCTAssertEqual(store.count, 1)
 
-        store.releaseOptimisticRemoval(id: "10/a")
+        // --- Root fix verification: self-healing auto-prune ---
+        // Simulate the server mutation having landed: the next payload no
+        // longer contains "10/a". After this load the optimistic protection
+        // for "10/a" must have been automatically pruned (no explicit release).
+        MockURLProtocol.requestHandler = { request in
+            let body = """
+            {"count":1,"entries":[
+              {"added_at":"2026-04-25T08:00:00Z","citekey":"b","doi":"10/b",
+               "last_attempt_at":null,"title":"b","tried":[]}
+            ]}
+            """
+            return Self.ok(request: request, body: body)
+        }
+        await store.load(silent: true)
+        XCTAssertEqual(store.entries.map(\.doi), ["10/b"])
+
+        // Now simulate a later payload that *does* contain "10/a" again
+        // (e.g. a different client re-added it, or a reconcile edge case).
+        // Because the previous load pruned the protection, "10/a" must now
+        // be visible without any caller having called releaseOptimisticRemoval.
+        MockURLProtocol.requestHandler = { request in
+            let body = """
+            {"count":2,"entries":[
+              {"added_at":"2026-04-25T08:00:00Z","citekey":"a","doi":"10/a",
+               "last_attempt_at":null,"title":"a","tried":[]},
+              {"added_at":"2026-04-25T08:00:00Z","citekey":"b","doi":"10/b",
+               "last_attempt_at":null,"title":"b","tried":[]}
+            ]}
+            """
+            return Self.ok(request: request, body: body)
+        }
         await store.load(silent: true)
         XCTAssertEqual(store.entries.map(\.doi), ["10/a", "10/b"])
         XCTAssertEqual(store.count, 2)
+    }
+
+    @MainActor
+    func testOptimisticRemoveIsClearedOnErrorPath() async {
+        MockURLProtocol.requestHandler = { request in
+            let body = """
+            {"count":1,"entries":[
+              {"added_at":"2026-04-25T08:00:00Z","citekey":"a","doi":"10/a",
+               "last_attempt_at":null,"title":"a","tried":[]}
+            ]}
+            """
+            return Self.ok(request: request, body: body)
+        }
+        let store = makeBacklogStore()
+        await store.load()
+
+        store.optimisticallyRemove(id: "10/a")
+        XCTAssertTrue(store.entries.isEmpty)
+
+        // Simulate what the views now do on error: explicitly release + reload
+        // so the authoritative (unchanged) server truth reappears.
+        store.releaseOptimisticRemoval(id: "10/a")
+        await store.load(silent: true)
+        XCTAssertEqual(store.entries.map(\.doi), ["10/a"])
     }
 
     // MARK: - factory

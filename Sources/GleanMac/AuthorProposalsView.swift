@@ -60,6 +60,8 @@ struct AuthorProposalsView: View {
         }
     }
 
+    /// Perform a Follow or Dismiss. Uses the same optimistic + explicit
+    /// post-mutation load pattern as MaybeReviewView (the root fix).
     @MainActor
     private func perform(_ kind: Kind, proposal: AuthorProposal) {
         let id = proposal.id
@@ -70,14 +72,28 @@ struct AuthorProposalsView: View {
             systemImage: kind.systemImage
         ) {
             store.optimisticallyRemove(id: id)
-            switch kind {
-            case .follow:
-                try await offlineCoordinator.queueAuthorFollow(author: proposal.author)
-            case .dismiss:
-                try await offlineCoordinator.queueAuthorDismiss(author: proposal.author)
+            do {
+                switch kind {
+                case .follow:
+                    try await offlineCoordinator.queueAuthorFollow(author: proposal.author)
+                case .dismiss:
+                    try await offlineCoordinator.queueAuthorDismiss(author: proposal.author)
+                }
+                await syncPendingOperations()
+
+                // Root fix for the reappearance flash: after the server has
+                // committed the removal, immediately load the authoritative
+                // state. The apply() auto-pruning will clean up the optimistic
+                // guard. For "follow" this is especially important because the
+                // mutation does not emit an intake-changed event.
+                await store.loadAfterLocalMutation(silent: true)
+
+                store.releaseOptimisticRemoval(id: id)
+            } catch {
+                store.releaseOptimisticRemoval(id: id)
+                await store.load(silent: true)
+                throw error
             }
-            store.releaseOptimisticRemoval(id: id)
-            await syncPendingOperations()
         }
     }
 

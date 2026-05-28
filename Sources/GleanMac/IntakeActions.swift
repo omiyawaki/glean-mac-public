@@ -2,8 +2,17 @@ import Foundation
 
 /// Thin wrappers around the four intake-mutation endpoints. Each posts
 /// application/x-www-form-urlencoded and returns once the server has
-/// committed the change. The corresponding store will refresh on the
-/// next /events tick — no manual reload needed at the call site.
+/// committed the change.
+///
+/// Background refreshes for all four lists (backlog, review, author
+/// proposals, library) are driven by the SSE "intake-changed" /
+/// "library-changed" events. For the two transient decision lists
+/// (Maybe Review and Author Proposals) the Mac app additionally performs
+/// a targeted post-mutation load immediately after a successful
+/// review/add|skip or author/follow|dismiss so the acting user sees
+/// final state with minimal latency (the auto-pruning in IntakeStore
+/// then cleans up the optimistic guard). The event path still keeps
+/// other clients and background tabs in sync.
 enum IntakeActions {
     private static let baseURL = URL(string: "http://backend.example.com:8765")!
     private static let defaultPostTimeout: TimeInterval = 30
