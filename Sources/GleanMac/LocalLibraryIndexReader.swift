@@ -46,7 +46,7 @@ struct LocalLibraryIndexReader {
         let entries = records.map { row in
             LibraryEntry(
                 citekey: row.citekey,
-                title: row.title,
+                title: LibraryEntry.cleanedTitle(row.title),
                 year: row.year,
                 doi: row.doi,
                 authors: authorsByCitekey[row.citekey] ?? []

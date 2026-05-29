@@ -166,6 +166,30 @@ struct LibraryEntry: Codable, Identifiable, Hashable {
     let authors: [LibraryAuthor]
 
     var id: String { citekey }
+
+    // Public initializer used by LocalLibraryIndexReader (local SQLite path)
+    init(citekey: String, title: String, year: Int?, doi: String?, authors: [LibraryAuthor]) {
+        self.citekey = citekey
+        self.title = LibraryEntry.cleanedTitle(title)
+        self.year = year
+        self.doi = doi
+        self.authors = authors
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        citekey = try container.decode(String.self, forKey: .citekey)
+        let rawTitle = try container.decode(String.self, forKey: .title)
+        title = LibraryEntry.cleanedTitle(rawTitle)
+        year = try container.decodeIfPresent(Int.self, forKey: .year)
+        doi = try container.decodeIfPresent(String.self, forKey: .doi)
+        authors = try container.decode([LibraryAuthor].self, forKey: .authors)
+    }
+
+    // CodingKeys only needed because we have a custom init(from:)
+    private enum CodingKeys: String, CodingKey {
+        case citekey, title, year, doi, authors
+    }
 }
 
 struct LibraryResponse: Codable {
@@ -207,11 +231,123 @@ struct LibraryRecord: Codable, Hashable, Identifiable {
 
     var id: String { citekey }
 
+    // Public memberwise initializer (used by tests and any direct construction).
+    // Applies defensive title cleaning.
+    init(
+        citekey: String,
+        type: String?,
+        title: String,
+        year: Int?,
+        doi: String?,
+        arxiv: String?,
+        isbn: String?,
+        pmid: String?,
+        pmcid: String?,
+        journal: String?,
+        volume: String?,
+        issue: String?,
+        pages: String?,
+        publisher: String?,
+        url: String?,
+        abstract: String?,
+        keywords: [String],
+        authors: [LibraryAuthor],
+        attachments: [LibraryAttachment],
+        addedAt: String?,
+        modifiedAt: String?,
+        read: Bool,
+        notes: String?
+    ) {
+        self.citekey = citekey
+        self.type = type
+        self.title = LibraryRecord.cleanedTitle(title)
+        self.year = year
+        self.doi = doi
+        self.arxiv = arxiv
+        self.isbn = isbn
+        self.pmid = pmid
+        self.pmcid = pmcid
+        self.journal = journal
+        self.volume = volume
+        self.issue = issue
+        self.pages = pages
+        self.publisher = publisher
+        self.url = url
+        self.abstract = abstract
+        self.keywords = keywords
+        self.authors = authors
+        self.attachments = attachments
+        self.addedAt = addedAt
+        self.modifiedAt = modifiedAt
+        self.read = read
+        self.notes = notes
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        citekey = try container.decode(String.self, forKey: .citekey)
+        type = try container.decodeIfPresent(String.self, forKey: .type)
+        let rawTitle = try container.decode(String.self, forKey: .title)
+        title = LibraryRecord.cleanedTitle(rawTitle)
+        year = try container.decodeIfPresent(Int.self, forKey: .year)
+        doi = try container.decodeIfPresent(String.self, forKey: .doi)
+        arxiv = try container.decodeIfPresent(String.self, forKey: .arxiv)
+        isbn = try container.decodeIfPresent(String.self, forKey: .isbn)
+        pmid = try container.decodeIfPresent(String.self, forKey: .pmid)
+        pmcid = try container.decodeIfPresent(String.self, forKey: .pmcid)
+        journal = try container.decodeIfPresent(String.self, forKey: .journal)
+        volume = try container.decodeIfPresent(String.self, forKey: .volume)
+        issue = try container.decodeIfPresent(String.self, forKey: .issue)
+        pages = try container.decodeIfPresent(String.self, forKey: .pages)
+        publisher = try container.decodeIfPresent(String.self, forKey: .publisher)
+        url = try container.decodeIfPresent(String.self, forKey: .url)
+        abstract = try container.decodeIfPresent(String.self, forKey: .abstract)
+        keywords = try container.decode([String].self, forKey: .keywords)
+        authors = try container.decode([LibraryAuthor].self, forKey: .authors)
+        attachments = try container.decode([LibraryAttachment].self, forKey: .attachments)
+        addedAt = try container.decodeIfPresent(String.self, forKey: .addedAt)
+        modifiedAt = try container.decodeIfPresent(String.self, forKey: .modifiedAt)
+        read = try container.decode(Bool.self, forKey: .read)
+        notes = try container.decodeIfPresent(String.self, forKey: .notes)
+    }
+
     enum CodingKeys: String, CodingKey {
         case citekey, type, title, year, doi, arxiv, isbn, pmid, pmcid
         case journal, volume, issue, pages, publisher, url, abstract
         case keywords, authors, attachments, read, notes
         case addedAt = "added_at"
         case modifiedAt = "modified_at"
+    }
+}
+
+// MARK: - Defensive title sanitization (protects against <scp>, <jats:...>, etc.
+// that can leak from Crossref/JATS publisher deposits into Glean metadata)
+extension LibraryEntry {
+    /// Strips common HTML/XML markup from titles (e.g. <scp>North Atlantic Oscillation</scp>)
+    /// and normalizes whitespace. This is a defensive belt-and-suspenders layer for
+    /// any records that were ingested before the Python-side strip_markup fix landed.
+    /// New records should already be clean at ingest time.
+    static func cleanedTitle(_ raw: String) -> String {
+        guard !raw.isEmpty else { return raw }
+        // Remove any <tag> or </tag> fragments (simple, fast, sufficient for this pollution)
+        let tagStripped = raw.replacingOccurrences(
+            of: "<[^>]+>",
+            with: " ",
+            options: .regularExpression
+        )
+        // Collapse runs of whitespace (including after tag removal)
+        let normalized = tagStripped.replacingOccurrences(
+            of: "\\s+",
+            with: " ",
+            options: .regularExpression
+        ).trimmingCharacters(in: .whitespacesAndNewlines)
+        return normalized
+    }
+}
+
+extension LibraryRecord {
+    /// Same defensive cleaning for the full record detail path.
+    static func cleanedTitle(_ raw: String) -> String {
+        LibraryEntry.cleanedTitle(raw)
     }
 }

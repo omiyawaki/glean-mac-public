@@ -1,9 +1,5 @@
 import SwiftUI
 
-enum LibraryRowLayout {
-    static let rowHeight: CGFloat = 52
-}
-
 struct LibraryView: View {
     let store: LibraryStore
     let listState: LibraryListState
@@ -36,7 +32,6 @@ struct LibraryView: View {
                     }
                 }
                 .animation(nil, value: listState.grouped)
-                .environment(\.defaultMinListRowHeight, LibraryRowLayout.rowHeight)
             }
         }
         .task {
@@ -61,18 +56,22 @@ struct LibraryView: View {
 private struct LibraryRow: View {
     let entry: LibraryEntry
 
+    /// Variable-height row. The title is allowed to wrap to two lines when
+    /// the list column is wide enough; the row grows vertically as needed.
+    /// This eliminates the previous situation where a hard 52 pt cap made
+    /// `.lineLimit(2)` ineffective and caused early truncation even with
+    /// plenty of horizontal space.
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(entry.title)
                 .font(.headline)
-                .lineLimit(2)
+                .lineLimit(2)   // Rows size naturally; title may wrap to 2 lines when the list column is wide.
             Text(authorLine)
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
         }
-        .padding(.vertical, 2)
-        .frame(height: LibraryRowLayout.rowHeight, alignment: .center)
+        .padding(.vertical, 6)
     }
 
     private var authorLine: String {
