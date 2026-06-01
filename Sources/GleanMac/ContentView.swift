@@ -125,7 +125,27 @@ struct ContentView: View {
         .onChange(of: selection) { _, newSelection in
             mountedSidebarItems.select(newSelection)
         }
+        .onChange(of: libraryStore.entries, initial: true) { _, _ in
+            recomputeLibraryGroups()
+        }
         .onReceive(ticker) { now = $0 }
+    }
+
+    private var syncedLibraryQueryBinding: Binding<String> {
+        Binding(
+            get: { libraryQuery },
+            set: { newValue in
+                libraryQuery = newValue
+                recomputeLibraryGroups(query: newValue)
+            }
+        )
+    }
+
+    private func recomputeLibraryGroups(query: String? = nil) {
+        libraryListState.update(
+            entries: libraryStore.entries,
+            query: query ?? libraryQuery
+        )
     }
 
     private func registerIntrospection() {
@@ -135,7 +155,7 @@ struct ContentView: View {
         let selectionBinding = $selection
         let backlogSelectionBinding = $backlogSelection
         let librarySelectionBinding = $librarySelection
-        let libraryQueryBinding = $libraryQuery
+        let libraryQueryBinding = syncedLibraryQueryBinding
         let inspectorBinding = $inspectorPresented
 
         // Capture stores by reference (each is @Observable).
@@ -240,7 +260,7 @@ struct ContentView: View {
                 LibraryView(store: libraryStore,
                             listState: libraryListState,
                             selection: $librarySelection,
-                            query: $libraryQuery)
+                            query: syncedLibraryQueryBinding)
                     .sidebarPane(.libraryAll, selection: selection)
             }
             if shouldMount(.backlog) {
@@ -386,7 +406,7 @@ struct ContentView: View {
                 citekey: librarySelection,
                 store: libraryDetailStore,
                 inspectorPresented: $inspectorPresented,
-                query: $libraryQuery
+                query: syncedLibraryQueryBinding
             )
         case .backlog:
             BacklogDetailView(

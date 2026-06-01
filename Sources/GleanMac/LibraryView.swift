@@ -1,5 +1,9 @@
 import SwiftUI
 
+enum LibraryRowLayout {
+    static let rowHeight: CGFloat = 72
+}
+
 struct LibraryView: View {
     let store: LibraryStore
     let listState: LibraryListState
@@ -22,56 +26,70 @@ struct LibraryView: View {
                     ProgressView().controlSize(.large)
                 }
             } else {
-                List(selection: $selection) {
-                    ForEach(listState.grouped, id: \.year) { group in
-                        Section(group.year.map { String($0) } ?? "Undated") {
-                            ForEach(group.entries) { entry in
-                                LibraryRow(entry: entry).tag(entry.id)
-                            }
-                        }
-                    }
+                let isFiltering = LibraryListIdentity.value(forQuery: query) == "library-filtered"
+                ZStack {
+                    libraryList(
+                        groups: listState.allGrouped,
+                        identity: "library-all",
+                        isHidden: isFiltering
+                    )
+                    libraryList(
+                        groups: listState.filteredGrouped,
+                        identity: "library-filtered",
+                        isHidden: !isFiltering
+                    )
                 }
-                .animation(nil, value: listState.grouped)
+                .animation(nil, value: isFiltering)
             }
         }
         .task {
             if !store.hasLoadedOnce { await store.load() }
         }
-        .task(id: query) {
-            recomputeGroups()
-        }
-        .task(id: store.entries.count) {
-            recomputeGroups()
-        }
     }
 
-    /// Recompute filter + year grouping into @State so the List sees a
-    /// stable value across body re-evaluations. The pure logic lives
-    /// in LibraryFilter (covered by tests).
-    private func recomputeGroups() {
-        listState.update(entries: store.entries, query: query)
+    @ViewBuilder
+    private func libraryList(
+        groups: [LibraryFilter.YearGroup],
+        identity: String,
+        isHidden: Bool
+    ) -> some View {
+        List(selection: $selection) {
+            ForEach(groups, id: \.year) { group in
+                Section(group.year.map { String($0) } ?? "Undated") {
+                    ForEach(group.entries) { entry in
+                        LibraryRow(entry: entry).tag(entry.id)
+                    }
+                }
+            }
+        }
+        .animation(nil, value: groups)
+        .id(identity)
+        .environment(\.defaultMinListRowHeight, LibraryRowLayout.rowHeight)
+        .opacity(isHidden ? 0 : 1)
+        .allowsHitTesting(!isHidden)
+        .accessibilityHidden(isHidden)
     }
 }
 
 private struct LibraryRow: View {
     let entry: LibraryEntry
 
-    /// Variable-height row. The title is allowed to wrap to two lines when
-    /// the list column is wide enough; the row grows vertically as needed.
-    /// This eliminates the previous situation where a hard 52 pt cap made
-    /// `.lineLimit(2)` ineffective and caused early truncation even with
-    /// plenty of horizontal space.
+    /// Fixed-height rows keep search-clear from triggering thousands of
+    /// automatic row-height measurements while still leaving room for a
+    /// two-line title plus the author line.
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(entry.title)
                 .font(.headline)
-                .lineLimit(2)   // Rows size naturally; title may wrap to 2 lines when the list column is wide.
+                .lineLimit(2)
             Text(authorLine)
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
         }
         .padding(.vertical, 6)
+        .frame(height: LibraryRowLayout.rowHeight, alignment: .center)
+        .help(entry.title)
     }
 
     private var authorLine: String {

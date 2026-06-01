@@ -63,6 +63,40 @@ final class LibraryListStateTests: XCTestCase {
         XCTAssertEqual(state.grouped.map(\.year), [2026])
     }
 
+    @MainActor
+    func testUpdateKeepsAllAndFilteredGroupsForFastModeSwitches() {
+        let entries = [
+            makeEntry(citekey: "A", title: "Cloud paper", year: 2026),
+            makeEntry(citekey: "B", title: "Ocean paper", year: 2025),
+            makeEntry(citekey: "C", title: "Cloud dynamics", year: 2025),
+        ]
+        let state = LibraryListState()
+
+        state.update(entries: entries, query: "")
+        state.update(entries: entries, query: "cloud")
+
+        XCTAssertEqual(state.allGrouped.flatMap(\.entries).map(\.citekey), ["A", "B", "C"])
+        XCTAssertEqual(state.filteredGrouped.flatMap(\.entries).map(\.citekey), ["A", "C"])
+        XCTAssertEqual(state.grouped.flatMap(\.entries).map(\.citekey), ["A", "C"])
+        XCTAssertEqual(state.visibleCount, 2)
+
+        state.update(entries: entries, query: "")
+
+        XCTAssertEqual(state.grouped.flatMap(\.entries).map(\.citekey), ["A", "B", "C"])
+        XCTAssertEqual(state.visibleCount, 3)
+    }
+
+    func testLibraryRowsUseFixedHeightForFastSearchClear() {
+        XCTAssertEqual(LibraryRowLayout.rowHeight, 72, accuracy: 0.001)
+    }
+
+    func testLibraryListIdentitySeparatesAllAndFilteredSearchStates() {
+        XCTAssertEqual(LibraryListIdentity.value(forQuery: ""), "library-all")
+        XCTAssertEqual(LibraryListIdentity.value(forQuery: "   \n"), "library-all")
+        XCTAssertEqual(LibraryListIdentity.value(forQuery: "miyawaki"), "library-filtered")
+        XCTAssertEqual(LibraryListIdentity.value(forQuery: "climate"), "library-filtered")
+    }
+
     private func makeEntry(
         citekey: String,
         title: String,
