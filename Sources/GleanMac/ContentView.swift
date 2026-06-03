@@ -50,6 +50,7 @@ struct ContentView: View {
     @State private var operationStore = PendingOperationStore.default
     @State private var syncWorker: PendingOperationSyncWorker?
     @State private var eventStream: EventStream?
+    @State private var addPaperController = AddPaperController()
 
     private static let eventsURL = URL(
         string: "http://backend.example.com:8765/events"
@@ -78,6 +79,13 @@ struct ContentView: View {
             // inside a ToolbarItemGroup skips that and the button looks
             // boxed-in next to the other toolbar items.
             LocalAppUpdateToolbarItem(controller: updateController)
+            ToolbarItem(placement: .primaryAction) {
+                AddPaperToolbarButton(
+                    controller: addPaperController,
+                    offlineCoordinator: offlineCoordinator,
+                    syncPendingOperations: syncPendingOperations
+                )
+            }
             ToolbarItem(placement: .primaryAction) {
                 ActionQueueButton(
                     queue: actionQueue,
@@ -126,6 +134,9 @@ struct ContentView: View {
             mountedSidebarItems.select(newSelection)
         }
         .onReceive(ticker) { now = $0 }
+        .focusedSceneValue(\.openAddPaper) {
+            addPaperController.present()
+        }
     }
 
     private func registerIntrospection() {

@@ -14,5 +14,8 @@ struct GleanMacApp: App {
         }
         .windowStyle(.titleBar)
         .windowToolbarStyle(.unified)
+        .commands {
+            AddPaperCommands()
+        }
     }
 }
