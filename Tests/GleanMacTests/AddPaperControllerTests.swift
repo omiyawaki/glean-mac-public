@@ -27,6 +27,33 @@ final class AddPaperControllerTests: XCTestCase {
         )
     }
 
+    func testEditingNormalizesDOIURLToBareDOI() {
+        let controller = AddPaperController()
+        controller.input = "https://doi.org/10.1038/s41467-025-66839-w"
+
+        controller.normalizeInputForEditing()
+
+        XCTAssertEqual(controller.input, "10.1038/s41467-025-66839-w")
+    }
+
+    func testSubmitNormalizesDOIURLBeforeQueueing() async throws {
+        let store = PendingOperationStore(url: tempURL())
+        let coordinator = OfflineIntakeCoordinator(operationStore: store)
+        let controller = AddPaperController()
+        controller.present()
+        controller.input = " https://doi.org/10.1038/s41467-025-66839-w "
+
+        await controller.submit(
+            offlineCoordinator: coordinator,
+            syncPendingOperations: {}
+        )
+
+        XCTAssertEqual(
+            store.operations.first?.kind,
+            .addPaper(input: "10.1038/s41467-025-66839-w", stagedPDFPath: nil)
+        )
+    }
+
     func testSubmitDismissesPopoverBeforeAwaitingServerSync() async throws {
         let store = PendingOperationStore(url: tempURL())
         let coordinator = OfflineIntakeCoordinator(operationStore: store)

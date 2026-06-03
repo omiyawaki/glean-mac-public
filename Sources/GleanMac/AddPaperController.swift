@@ -10,7 +10,7 @@ final class AddPaperController {
     var isSubmitting = false
 
     var trimmedInput: String {
-        input.trimmingCharacters(in: .whitespacesAndNewlines)
+        Self.normalizedPaperInput(input)
     }
 
     var canSubmit: Bool {
@@ -20,6 +20,13 @@ final class AddPaperController {
     func present() {
         errorMessage = nil
         isPresented = true
+    }
+
+    func normalizeInputForEditing() {
+        let normalized = Self.normalizedPaperInput(input)
+        if normalized != input {
+            input = normalized
+        }
     }
 
     func submit(
@@ -47,5 +54,17 @@ final class AddPaperController {
             isSubmitting = false
             errorMessage = error.localizedDescription
         }
+    }
+
+    private static func normalizedPaperInput(_ value: String) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let url = URL(string: trimmed),
+              let host = url.host?.lowercased(),
+              host == "doi.org" || host == "dx.doi.org"
+        else {
+            return trimmed
+        }
+        let doi = url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        return doi.isEmpty ? trimmed : doi
     }
 }

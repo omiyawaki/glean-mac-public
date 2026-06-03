@@ -39,6 +39,9 @@ private struct AddPaperPopover: View {
                 .focused($inputFocused)
                 .disabled(controller.isSubmitting)
                 .onSubmit(submitIfPossible)
+                .onChange(of: controller.input) { _, _ in
+                    controller.normalizeInputForEditing()
+                }
 
             if let errorMessage = controller.errorMessage {
                 Text(errorMessage)
