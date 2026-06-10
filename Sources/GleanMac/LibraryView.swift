@@ -42,9 +42,6 @@ struct LibraryView: View {
                 .animation(nil, value: isFiltering)
             }
         }
-        .task {
-            if !store.hasLoadedOnce { await store.load() }
-        }
     }
 
     @ViewBuilder

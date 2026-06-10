@@ -36,20 +36,28 @@ where Entry.ID: Hashable {
     private let minSpinnerDuration: Duration
     private let loadCachedResponse: (() async throws -> Response?)?
     private let saveResponse: ((Response) async throws -> Void)?
+    private let automaticRetryDelay: Duration?
+    private let maxAutomaticRetryAttempts: Int
     private var optimisticallyRemovedIDs: Set<Entry.ID> = []
     private var responseETag: String?
+    private var automaticRetryTask: Task<Void, Never>?
+    private var automaticRetryAttempts = 0
 
     init(endpoint: URL,
          timeoutInterval: TimeInterval = 8,
          minSpinnerDuration: Duration = .milliseconds(700),
          loadCachedResponse: (() async throws -> Response?)? = nil,
          saveResponse: ((Response) async throws -> Void)? = nil,
+         automaticRetryDelay: Duration? = nil,
+         maxAutomaticRetryAttempts: Int = 0,
          extract: @escaping (Response) -> (Int, [Entry])) {
         self.endpoint = endpoint
         self.timeoutInterval = timeoutInterval
         self.minSpinnerDuration = minSpinnerDuration
         self.loadCachedResponse = loadCachedResponse
         self.saveResponse = saveResponse
+        self.automaticRetryDelay = automaticRetryDelay
+        self.maxAutomaticRetryAttempts = max(0, maxAutomaticRetryAttempts)
         self.extract = extract
     }
 
@@ -75,6 +83,7 @@ where Entry.ID: Hashable {
         do {
             var request = URLRequest(url: endpoint)
             request.timeoutInterval = timeoutInterval
+            request.cachePolicy = .reloadIgnoringLocalCacheData
             if let responseETag {
                 request.setValue(responseETag,
                                  forHTTPHeaderField: "If-None-Match")
@@ -91,6 +100,7 @@ where Entry.ID: Hashable {
             if http.statusCode == 304 {
                 lastError = nil
                 lastRefreshedAt = Date()
+                resetAutomaticRetry()
                 if showSpinner {
                     await holdSpinner(since: started)
                     isLoading = false
@@ -101,6 +111,7 @@ where Entry.ID: Hashable {
                 let code = (response as? HTTPURLResponse)?.statusCode ?? -1
                 lastError = "HTTP \(code)"
                 log.warning("load http_error url=\(self.endpoint.absoluteString, privacy: .public) status=\(code, privacy: .public)")
+                scheduleAutomaticRetryIfNeeded()
                 if showSpinner {
                     await holdSpinner(since: started)
                     isLoading = false
@@ -113,6 +124,7 @@ where Entry.ID: Hashable {
             apply(payload, animated: true)
             lastError = nil
             responseETag = http.value(forHTTPHeaderField: "ETag")
+            resetAutomaticRetry()
             if let saveResponse {
                 try? await saveResponse(payload)
             }
@@ -121,6 +133,7 @@ where Entry.ID: Hashable {
         } catch {
             lastError = error.localizedDescription
             log.error("load decode_or_io_error url=\(self.endpoint.absoluteString, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
+            scheduleAutomaticRetryIfNeeded()
         }
 
         if showSpinner {
@@ -197,6 +210,25 @@ where Entry.ID: Hashable {
             try? await Task.sleep(for: minSpinnerDuration - elapsed)
         }
     }
+
+    private func scheduleAutomaticRetryIfNeeded() {
+        guard hasLoadedOnce,
+              let automaticRetryDelay,
+              automaticRetryAttempts < maxAutomaticRetryAttempts else { return }
+        automaticRetryAttempts += 1
+        automaticRetryTask?.cancel()
+        automaticRetryTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: automaticRetryDelay)
+            guard !Task.isCancelled else { return }
+            await self?.load(silent: true)
+        }
+    }
+
+    private func resetAutomaticRetry() {
+        automaticRetryAttempts = 0
+        automaticRetryTask?.cancel()
+        automaticRetryTask = nil
+    }
 }
 
 // MARK: - Concrete factories
@@ -242,6 +274,8 @@ enum Stores {
                 return try await localIndexReader?.load()
             },
             saveResponse: { try await snapshotCache.save($0) },
+            automaticRetryDelay: .seconds(5),
+            maxAutomaticRetryAttempts: 3,
             extract: { ($0.count, $0.entries) }
         )
     }

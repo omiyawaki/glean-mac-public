@@ -113,6 +113,7 @@ struct ContentView: View {
             async let initialAuthor: Void = author.load(silent: true)
             _ = await (initialBacklog, initialReview, initialAuthor)
             applyLaunchSelectionIfNeeded()
+            loadLibraryIfSelected(selection)
             let stream = EventStream(url: Self.eventsURL) { event in
                 switch event {
                 case "intake-changed":
@@ -132,6 +133,7 @@ struct ContentView: View {
         }
         .onChange(of: selection) { _, newSelection in
             mountedSidebarItems.select(newSelection)
+            loadLibraryIfSelected(newSelection)
         }
         .onChange(of: libraryStore.entries, initial: true) { _, _ in
             recomputeLibraryGroups()
@@ -344,6 +346,14 @@ struct ContentView: View {
             await authorStore.load()
         case .none:
             break
+        }
+    }
+
+    private func loadLibraryIfSelected(_ selectedItem: SidebarItem?) {
+        guard selectedItem == .libraryAll else { return }
+        let library = libraryStore
+        Task {
+            await library.load(silent: library.hasLoadedOnce)
         }
     }
 

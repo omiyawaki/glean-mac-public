@@ -54,6 +54,23 @@ final class IntakeStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testLoadBypassesURLCache() async {
+        var observedCachePolicy: URLRequest.CachePolicy?
+        MockURLProtocol.requestHandler = { request in
+            observedCachePolicy = request.cachePolicy
+            let body = """
+            {"count":0,"entries":[]}
+            """
+            return Self.ok(request: request, body: body)
+        }
+
+        let store = makeBacklogStore()
+        await store.load()
+
+        XCTAssertEqual(observedCachePolicy, .reloadIgnoringLocalCacheData)
+    }
+
+    @MainActor
     func testLoadHTTPErrorRecordsErrorAndDoesNotMarkLoaded() async {
         MockURLProtocol.requestHandler = { request in
             let response = HTTPURLResponse(
@@ -272,6 +289,61 @@ final class IntakeStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testCachedInitialLoadRetriesAfterNetworkFailure() async {
+        var requestCount = 0
+        MockURLProtocol.requestHandler = { request in
+            requestCount += 1
+            if requestCount == 1 {
+                let response = HTTPURLResponse(
+                    url: request.url!, statusCode: 503,
+                    httpVersion: nil, headerFields: nil
+                )!
+                return (response, Data())
+            }
+            let body = """
+            {"count":1,"entries":[{
+              "added_at":"2026-04-25T08:00:00Z",
+              "citekey":"FreshAfterRetry",
+              "doi":"10.1000/fresh-after-retry",
+              "last_attempt_at":null,
+              "title":"Fresh after retry",
+              "tried":[]
+            }]}
+            """
+            return Self.ok(request: request, body: body)
+        }
+        let cached = BacklogResponse(count: 1, entries: [
+            BacklogEntry(
+                citekey: "StaleCachedPaper",
+                doi: "10.1000/stale",
+                title: "Stale cached paper",
+                addedAt: Date(timeIntervalSince1970: 0),
+                lastAttemptAt: nil,
+                tried: []
+            )
+        ])
+        let store = makeBacklogStore(
+            loadCachedResponse: { cached },
+            automaticRetryDelay: .milliseconds(10),
+            maxAutomaticRetryAttempts: 2
+        )
+
+        await store.load()
+
+        XCTAssertEqual(store.entries.map(\.citekey), ["StaleCachedPaper"])
+        XCTAssertEqual(store.lastError, "HTTP 503")
+
+        let deadline = Date().addingTimeInterval(1)
+        while requestCount < 2 && Date() < deadline {
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+
+        XCTAssertEqual(requestCount, 2)
+        XCTAssertEqual(store.entries.map(\.citekey), ["FreshAfterRetry"])
+        XCTAssertNil(store.lastError)
+    }
+
+    @MainActor
     func testSecondLoadKeepsExistingEntriesUntilNewArrives() async {
         // First load: succeed with one entry.
         MockURLProtocol.requestHandler = { request in
@@ -416,7 +488,9 @@ final class IntakeStoreTests: XCTestCase {
     @MainActor
     private func makeBacklogStore(
         loadCachedResponse: (() async throws -> BacklogResponse?)? = nil,
-        saveResponse: ((BacklogResponse) async throws -> Void)? = nil
+        saveResponse: ((BacklogResponse) async throws -> Void)? = nil,
+        automaticRetryDelay: Duration? = nil,
+        maxAutomaticRetryAttempts: Int = 0
     ) -> IntakeStore<BacklogEntry, BacklogResponse> {
         IntakeStore(
             endpoint: URL(string: "http://test.local/api/backlog")!,
@@ -424,6 +498,8 @@ final class IntakeStoreTests: XCTestCase {
             minSpinnerDuration: .milliseconds(0),  // skip the perceptibility floor in tests
             loadCachedResponse: loadCachedResponse,
             saveResponse: saveResponse,
+            automaticRetryDelay: automaticRetryDelay,
+            maxAutomaticRetryAttempts: maxAutomaticRetryAttempts,
             extract: { ($0.count, $0.entries) }
         )
     }
