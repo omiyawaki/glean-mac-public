@@ -33,6 +33,7 @@ final class PendingOperationStore {
     var operations: [PendingOperation] = []
 
     private let url: URL
+    private let managedPendingPDFDirectory: URL
     static let defaultStaleRunningInterval: TimeInterval = 20 * 60
 
     static var `default`: PendingOperationStore {
@@ -49,8 +50,22 @@ final class PendingOperationStore {
             .appendingPathComponent("PendingOperations.json")
     }
 
-    init(url: URL) {
+    static var defaultPendingPDFDirectory: URL {
+        let base = FileManager.default.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask
+        ).first ?? FileManager.default.homeDirectoryForCurrentUser
+        return base
+            .appendingPathComponent("Glean", isDirectory: true)
+            .appendingPathComponent("PendingPDFs", isDirectory: true)
+    }
+
+    init(
+        url: URL,
+        managedPendingPDFDirectory: URL = PendingOperationStore.defaultPendingPDFDirectory
+    ) {
         self.url = url
+        self.managedPendingPDFDirectory = managedPendingPDFDirectory
     }
 
     var pendingOperations: [PendingOperation] {
@@ -71,12 +86,21 @@ final class PendingOperationStore {
         }
         let data = try Data(contentsOf: url)
         operations = try JSONDecoder().decode([PendingOperation].self, from: data)
+        if compactDuplicateAttachOperations() {
+            try await save()
+        }
     }
 
     @discardableResult
     func enqueue(_ kind: PendingOperation.Kind,
                  id: UUID = UUID(),
                  createdAt: Date = Date()) async throws -> PendingOperation {
+        if let existing = try await coalesceAttachPDFIfNeeded(
+            kind,
+            updatedAt: createdAt
+        ) {
+            return existing
+        }
         let operation = PendingOperation(
             id: id,
             createdAt: createdAt,
@@ -99,11 +123,10 @@ final class PendingOperationStore {
     }
 
     func markSynced(id: UUID) async throws {
-        try await update(id: id) { operation in
-            operation.status = .synced
-            operation.errorMessage = nil
-            operation.updatedAt = Date()
-        }
+        guard let index = operations.firstIndex(where: { $0.id == id }) else { return }
+        let operation = operations.remove(at: index)
+        removeStagedFile(for: operation)
+        try await save()
     }
 
     func markNeedsReview(id: UUID, message: String) async throws {
@@ -169,6 +192,78 @@ final class PendingOperationStore {
         try await save()
     }
 
+    private func coalesceAttachPDFIfNeeded(
+        _ kind: PendingOperation.Kind,
+        updatedAt: Date
+    ) async throws -> PendingOperation? {
+        guard case .attachPDF(let newPath, let citekey) = kind,
+              let citekey,
+              !citekey.isEmpty,
+              let index = operations.firstIndex(where: {
+                  $0.deduplicatesAttachPDF(for: citekey)
+              })
+        else {
+            return nil
+        }
+
+        switch operations[index].status {
+        case .queued, .running:
+            removeManagedStagedFile(atPath: newPath)
+        case .failed, .needsReview:
+            let oldPath = operations[index].stagedFilePath
+            operations[index] = PendingOperation(
+                id: operations[index].id,
+                createdAt: operations[index].createdAt,
+                kind: .attachPDF(stagedFilePath: newPath, citekey: citekey),
+                status: .queued,
+                errorMessage: nil,
+                updatedAt: updatedAt
+            )
+            if oldPath != newPath {
+                removeManagedStagedFile(atPath: oldPath)
+            }
+            try await save()
+        case .synced:
+            break
+        }
+        return operations[index]
+    }
+
+    @discardableResult
+    private func compactDuplicateAttachOperations() -> Bool {
+        var changed = false
+        var retainedByCitekey: [String: Int] = [:]
+        var retainedOriginalIndices = Set<Int>()
+
+        for index in operations.indices.sorted(by: {
+            operations[$0].createdAt > operations[$1].createdAt
+        }) {
+            let operation = operations[index]
+            if operation.status == .synced {
+                removeStagedFile(for: operation)
+                changed = true
+                continue
+            }
+            guard let citekey = operation.attachPDFCitekey else {
+                retainedOriginalIndices.insert(index)
+                continue
+            }
+            if retainedByCitekey[citekey] == nil {
+                retainedByCitekey[citekey] = index
+                retainedOriginalIndices.insert(index)
+            } else {
+                removeStagedFile(for: operation)
+                changed = true
+            }
+        }
+
+        guard changed else { return false }
+        operations = operations.indices
+            .filter { retainedOriginalIndices.contains($0) }
+            .map { operations[$0] }
+        return true
+    }
+
     private func save() async throws {
         let directory = url.deletingLastPathComponent()
         try FileManager.default.createDirectory(
@@ -179,5 +274,55 @@ final class PendingOperationStore {
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         let data = try encoder.encode(operations)
         try data.write(to: url, options: [.atomic])
+    }
+
+    private func removeStagedFile(for operation: PendingOperation) {
+        removeManagedStagedFile(atPath: operation.stagedFilePath)
+    }
+
+    private func removeManagedStagedFile(atPath path: String?) {
+        guard let path else { return }
+        let fileURL = URL(fileURLWithPath: path)
+        guard isManagedPendingPDF(fileURL) else { return }
+        try? FileManager.default.removeItem(at: fileURL)
+    }
+
+    private func isManagedPendingPDF(_ fileURL: URL) -> Bool {
+        let directoryPath = managedPendingPDFDirectory.standardizedFileURL.path
+        let filePath = fileURL.standardizedFileURL.path
+        return filePath.hasPrefix(directoryPath + "/")
+    }
+}
+
+private extension PendingOperation {
+    var attachPDFCitekey: String? {
+        guard case .attachPDF(_, let citekey) = kind,
+              let citekey,
+              !citekey.isEmpty
+        else {
+            return nil
+        }
+        return citekey
+    }
+
+    var stagedFilePath: String? {
+        switch kind {
+        case .attachPDF(let stagedFilePath, _):
+            return stagedFilePath
+        case .addPaper(_, let stagedPDFPath):
+            return stagedPDFPath
+        case .reviewAdd, .reviewSkip, .authorFollow, .authorDismiss:
+            return nil
+        }
+    }
+
+    func deduplicatesAttachPDF(for citekey: String) -> Bool {
+        guard attachPDFCitekey == citekey else { return false }
+        switch status {
+        case .queued, .running, .failed, .needsReview:
+            return true
+        case .synced:
+            return false
+        }
     }
 }

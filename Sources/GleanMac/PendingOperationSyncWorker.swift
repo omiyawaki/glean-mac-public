@@ -13,6 +13,8 @@ final class PendingOperationSyncWorker {
     private let staleRunningInterval: TimeInterval
     private let now: @MainActor () -> Date
     private let submit: Submit
+    private var isSyncing = false
+    private var needsFollowUpSync = false
 
     init(store: PendingOperationStore,
          submit: @escaping Submit = { try await IntakeActions.submit($0) }) {
@@ -33,6 +35,20 @@ final class PendingOperationSyncWorker {
     }
 
     func syncPending() async {
+        if isSyncing {
+            needsFollowUpSync = true
+            return
+        }
+        isSyncing = true
+        defer { isSyncing = false }
+
+        repeat {
+            needsFollowUpSync = false
+            await syncPendingOnce()
+        } while needsFollowUpSync
+    }
+
+    private func syncPendingOnce() async {
         try? await store.requeueStaleRunningOperations(
             now: now(),
             olderThan: staleRunningInterval

@@ -131,22 +131,13 @@ enum IntakeActions {
     static func attach(file url: URL,
                        citekey: String? = nil,
                        operationID: UUID? = nil) async throws {
-        let fileData = try Data(contentsOf: url)
         let boundary = UUID().uuidString
-
-        var body = Data()
-        body.append("--\(boundary)\r\n".data(using: .utf8)!)
-        body.append("Content-Disposition: form-data; name=\"file\"; filename=\"\(url.lastPathComponent)\"\r\n".data(using: .utf8)!)
-        body.append("Content-Type: application/pdf\r\n\r\n".data(using: .utf8)!)
-        body.append(fileData)
-        body.append("\r\n".data(using: .utf8)!)
-        if let citekey, !citekey.isEmpty {
-            body.append("--\(boundary)\r\n".data(using: .utf8)!)
-            body.append("Content-Disposition: form-data; name=\"citekey\"\r\n\r\n".data(using: .utf8)!)
-            body.append(citekey.data(using: .utf8)!)
-            body.append("\r\n".data(using: .utf8)!)
-        }
-        body.append("--\(boundary)--\r\n".data(using: .utf8)!)
+        let bodyFile = try makeMultipartUploadFile(
+            pdfURL: url,
+            boundary: boundary,
+            citekey: citekey
+        )
+        defer { try? FileManager.default.removeItem(at: bodyFile) }
 
         var request = URLRequest(url: baseURL.appendingPathComponent("/attach"))
         request.httpMethod = "POST"
@@ -157,9 +148,11 @@ enum IntakeActions {
                              forHTTPHeaderField: "X-Glean-Operation-ID")
         }
         request.timeoutInterval = 180
-        request.httpBody = body
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await URLSession.shared.upload(
+            for: request,
+            fromFile: bodyFile
+        )
         guard let http = response as? HTTPURLResponse else {
             throw ActionError.server("Invalid response")
         }
@@ -173,6 +166,59 @@ enum IntakeActions {
                 ActionError.message(from: payload) ?? "Upload failed"
             )
         }
+    }
+
+    private static func makeMultipartUploadFile(
+        pdfURL: URL,
+        boundary: String,
+        citekey: String?
+    ) throws -> URL {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("GleanMultipartUploads", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
+        let bodyURL = directory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("body")
+        FileManager.default.createFile(atPath: bodyURL.path, contents: nil)
+
+        let output = try FileHandle(forWritingTo: bodyURL)
+        defer { try? output.close() }
+
+        try write("--\(boundary)\r\n", to: output)
+        try write(
+            "Content-Disposition: form-data; name=\"file\"; filename=\"\(pdfURL.lastPathComponent)\"\r\n",
+            to: output
+        )
+        try write("Content-Type: application/pdf\r\n\r\n", to: output)
+        try copyFile(pdfURL, to: output)
+        try write("\r\n", to: output)
+        if let citekey, !citekey.isEmpty {
+            try write("--\(boundary)\r\n", to: output)
+            try write(
+                "Content-Disposition: form-data; name=\"citekey\"\r\n\r\n",
+                to: output
+            )
+            try write(citekey, to: output)
+            try write("\r\n", to: output)
+        }
+        try write("--\(boundary)--\r\n", to: output)
+        return bodyURL
+    }
+
+    private static func copyFile(_ source: URL, to output: FileHandle) throws {
+        let input = try FileHandle(forReadingFrom: source)
+        defer { try? input.close() }
+        while let chunk = try input.read(upToCount: 1024 * 1024),
+              !chunk.isEmpty {
+            try output.write(contentsOf: chunk)
+        }
+    }
+
+    private static func write(_ string: String, to output: FileHandle) throws {
+        try output.write(contentsOf: Data(string.utf8))
     }
 
     private static func post(path: String,

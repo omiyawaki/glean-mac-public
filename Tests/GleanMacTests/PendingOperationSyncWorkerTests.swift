@@ -15,8 +15,7 @@ final class PendingOperationSyncWorkerTests: XCTestCase {
         await worker.syncPending()
 
         XCTAssertEqual(submitted, [.reviewAdd(doi: "10.1000/add")])
-        XCTAssertEqual(store.operations.first?.id, operation.id)
-        XCTAssertEqual(store.operations.first?.status, .synced)
+        XCTAssertFalse(store.operations.contains { $0.id == operation.id })
     }
 
     func testSyncRetriesFailedOperation() async throws {
@@ -32,8 +31,7 @@ final class PendingOperationSyncWorkerTests: XCTestCase {
         await worker.syncPending()
 
         XCTAssertEqual(submitCount, 1)
-        XCTAssertEqual(store.operations.first?.status, .synced)
-        XCTAssertNil(store.operations.first?.errorMessage)
+        XCTAssertTrue(store.operations.isEmpty)
     }
 
     func testSyncMarksThrownErrorAsFailed() async throws {
@@ -81,7 +79,35 @@ final class PendingOperationSyncWorkerTests: XCTestCase {
         await worker.syncPending()
 
         XCTAssertEqual(submitted, [operation.id])
-        XCTAssertEqual(store.operations.first?.status, .synced)
+        XCTAssertTrue(store.operations.isEmpty)
+    }
+
+    func testConcurrentSyncRequestsDoNotSubmitOverlappingOperations() async throws {
+        let store = PendingOperationStore(url: tempURL())
+        try await store.enqueue(.reviewAdd(doi: "10.1000/one"))
+        try await store.enqueue(.reviewAdd(doi: "10.1000/two"))
+        var activeSubmissions = 0
+        var maximumActiveSubmissions = 0
+        var submitCount = 0
+        let worker = PendingOperationSyncWorker(store: store) { _ in
+            activeSubmissions += 1
+            maximumActiveSubmissions = max(
+                maximumActiveSubmissions,
+                activeSubmissions
+            )
+            submitCount += 1
+            try? await Task.sleep(for: .milliseconds(20))
+            activeSubmissions -= 1
+            return .synced
+        }
+
+        async let first: Void = worker.syncPending()
+        async let second: Void = worker.syncPending()
+        _ = await (first, second)
+
+        XCTAssertEqual(submitCount, 2)
+        XCTAssertEqual(maximumActiveSubmissions, 1)
+        XCTAssertTrue(store.operations.isEmpty)
     }
 
     private func tempURL() -> URL {

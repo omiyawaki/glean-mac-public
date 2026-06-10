@@ -32,6 +32,126 @@ final class PendingOperationStoreTests: XCTestCase {
         XCTAssertEqual(pendingIDs, [queued.id, failed.id])
     }
 
+    func testEnqueueCoalescesDuplicateAttachPDFForSameCitekey() async throws {
+        let pendingPDFDirectory = tempDirectory()
+        let firstPDF = pendingPDFDirectory.appendingPathComponent("first.pdf")
+        let secondPDF = pendingPDFDirectory.appendingPathComponent("second.pdf")
+        try FileManager.default.createDirectory(
+            at: pendingPDFDirectory,
+            withIntermediateDirectories: true
+        )
+        try Data("%PDF-1.7\nfirst".utf8).write(to: firstPDF)
+        try Data("%PDF-1.7\nsecond".utf8).write(to: secondPDF)
+        let store = PendingOperationStore(
+            url: tempURL(),
+            managedPendingPDFDirectory: pendingPDFDirectory
+        )
+        let first = try await store.enqueue(
+            .attachPDF(stagedFilePath: firstPDF.path,
+                       citekey: "Abdi2026Hrrrcast"),
+            createdAt: Date(timeIntervalSince1970: 100)
+        )
+
+        let second = try await store.enqueue(
+            .attachPDF(stagedFilePath: secondPDF.path,
+                       citekey: "Abdi2026Hrrrcast"),
+            createdAt: Date(timeIntervalSince1970: 200)
+        )
+
+        XCTAssertEqual(second.id, first.id)
+        XCTAssertEqual(store.operations.count, 1)
+        XCTAssertEqual(
+            store.operations.first?.kind,
+            .attachPDF(stagedFilePath: firstPDF.path,
+                       citekey: "Abdi2026Hrrrcast")
+        )
+        XCTAssertTrue(FileManager.default.fileExists(atPath: firstPDF.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: secondPDF.path))
+    }
+
+    func testEnqueueReplacesFailedDuplicateAttachPDFForSameCitekey() async throws {
+        let store = PendingOperationStore(url: tempURL())
+        let first = try await store.enqueue(
+            .attachPDF(stagedFilePath: "/tmp/failed.pdf",
+                       citekey: "Abdi2026Hrrrcast"),
+            createdAt: Date(timeIntervalSince1970: 100)
+        )
+        try await store.markFailed(id: first.id, message: "offline")
+
+        let second = try await store.enqueue(
+            .attachPDF(stagedFilePath: "/tmp/fresh.pdf",
+                       citekey: "Abdi2026Hrrrcast"),
+            createdAt: Date(timeIntervalSince1970: 200)
+        )
+
+        XCTAssertEqual(second.id, first.id)
+        XCTAssertEqual(store.operations.count, 1)
+        XCTAssertEqual(
+            store.operations.first?.kind,
+            .attachPDF(stagedFilePath: "/tmp/fresh.pdf",
+                       citekey: "Abdi2026Hrrrcast")
+        )
+        XCTAssertEqual(store.operations.first?.status, .queued)
+        XCTAssertNil(store.operations.first?.errorMessage)
+    }
+
+    func testMarkSyncedRemovesOperationAndManagedStagedPDF() async throws {
+        let pendingPDFDirectory = tempDirectory()
+        let stagedPDF = pendingPDFDirectory.appendingPathComponent("staged.pdf")
+        try FileManager.default.createDirectory(
+            at: pendingPDFDirectory,
+            withIntermediateDirectories: true
+        )
+        try Data("%PDF-1.7\nsynced".utf8).write(to: stagedPDF)
+        let store = PendingOperationStore(
+            url: tempURL(),
+            managedPendingPDFDirectory: pendingPDFDirectory
+        )
+        let operation = try await store.enqueue(
+            .attachPDF(stagedFilePath: stagedPDF.path,
+                       citekey: "Abdi2026Hrrrcast")
+        )
+
+        try await store.markSynced(id: operation.id)
+
+        XCTAssertTrue(store.operations.isEmpty)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: stagedPDF.path))
+    }
+
+    func testLoadCompactsPersistedDuplicateAttachPDFsByCitekey() async throws {
+        let url = tempURL()
+        let old = PendingOperation(
+            id: UUID(uuidString: "11111111-1111-1111-1111-111111111111")!,
+            createdAt: Date(timeIntervalSince1970: 100),
+            kind: .attachPDF(stagedFilePath: "/tmp/old.pdf",
+                             citekey: "Abdi2026Hrrrcast"),
+            status: .failed,
+            errorMessage: "offline",
+            updatedAt: Date(timeIntervalSince1970: 150)
+        )
+        let fresh = PendingOperation(
+            id: UUID(uuidString: "22222222-2222-2222-2222-222222222222")!,
+            createdAt: Date(timeIntervalSince1970: 200),
+            kind: .attachPDF(stagedFilePath: "/tmp/fresh.pdf",
+                             citekey: "Abdi2026Hrrrcast"),
+            status: .queued,
+            errorMessage: nil,
+            updatedAt: Date(timeIntervalSince1970: 200)
+        )
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        try encoder.encode([old, fresh]).write(to: url)
+        let store = PendingOperationStore(url: url)
+
+        try await store.load()
+
+        XCTAssertEqual(store.operations.map(\.id), [fresh.id])
+    }
+
     func testRecoverStaleRunningOperationsRequeuesOnlyExpiredRuns() async throws {
         let store = PendingOperationStore(url: tempURL())
         let fresh = try await store.enqueue(.reviewAdd(doi: "10.1000/fresh"),
@@ -94,5 +214,10 @@ final class PendingOperationStoreTests: XCTestCase {
         FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString)
             .appendingPathComponent("operations.json")
+    }
+
+    private func tempDirectory() -> URL {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
     }
 }
