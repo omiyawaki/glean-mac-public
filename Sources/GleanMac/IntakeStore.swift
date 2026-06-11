@@ -238,9 +238,25 @@ enum Stores {
     private static let intakeBase = URL(string: "http://backend.example.com:8765")!
     private static let libraryBase = URL(string: "http://backend.example.com:8766")!
 
+    private static func intakeEndpoint(
+        _ path: String,
+        queryItems: [URLQueryItem] = []
+    ) -> URL {
+        let url = intakeBase.appendingPathComponent(path)
+        guard !queryItems.isEmpty,
+              var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            return url
+        }
+        components.queryItems = queryItems
+        return components.url ?? url
+    }
+
     static func backlog() -> IntakeStore<BacklogEntry, BacklogResponse> {
         IntakeStore(
-            endpoint: intakeBase.appendingPathComponent("/api/backlog"),
+            endpoint: intakeEndpoint(
+                "api/backlog",
+                queryItems: [URLQueryItem(name: "scope", value: "tracked")]
+            ),
             extract: { ($0.count, $0.entries) }
         )
     }

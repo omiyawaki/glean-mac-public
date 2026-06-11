@@ -71,6 +71,31 @@ final class IntakeStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testBacklogFactoryRequestsTrackedScope() async {
+        var observedURL: URL?
+        MockURLProtocol.requestHandler = { request in
+            observedURL = request.url
+            let body = """
+            {"count":0,"entries":[]}
+            """
+            return Self.ok(request: request, body: body)
+        }
+
+        let store = Stores.backlog()
+        await store.load()
+
+        let components = try? XCTUnwrap(URLComponents(
+            url: try XCTUnwrap(observedURL),
+            resolvingAgainstBaseURL: false
+        ))
+        XCTAssertEqual(components?.path, "/api/backlog")
+        XCTAssertEqual(
+            components?.queryItems,
+            [URLQueryItem(name: "scope", value: "tracked")]
+        )
+    }
+
+    @MainActor
     func testLoadHTTPErrorRecordsErrorAndDoesNotMarkLoaded() async {
         MockURLProtocol.requestHandler = { request in
             let response = HTTPURLResponse(
