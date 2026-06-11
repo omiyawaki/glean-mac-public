@@ -78,7 +78,7 @@ struct WebViewer: NSViewRepresentable {
     /// canonical open-source equivalent and behaves indistinguishably
     /// on the publisher pages we care about.
     private static func installDarkReader(in controller: WKUserContentController) {
-        guard let url = Bundle.module.url(forResource: "darkreader", withExtension: "js"),
+        guard let url = darkReaderScriptURL(),
               let source = try? String(contentsOf: url, encoding: .utf8)
         else { return }
         // Stage 1 — runs before any page CSS/HTML has rendered. Plant a
@@ -139,6 +139,11 @@ struct WebViewer: NSViewRepresentable {
             injectionTime: .atDocumentEnd,
             forMainFrameOnly: false
         ))
+    }
+
+    nonisolated static func darkReaderScriptURL() -> URL? {
+        Bundle.main.url(forResource: "darkreader", withExtension: "js")
+            ?? Bundle.module.url(forResource: "darkreader", withExtension: "js")
     }
 
     func makeCoordinator() -> Coordinator {
