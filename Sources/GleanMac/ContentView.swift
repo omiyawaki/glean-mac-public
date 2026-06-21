@@ -289,7 +289,7 @@ struct ContentView: View {
                 MaybeReviewView(store: reviewStore,
                                 actionQueue: actionQueue,
                                 offlineCoordinator: offlineCoordinator,
-                                syncPendingOperations: syncPendingOperations)
+                                syncPendingOperation: syncPendingOperation)
                     .sidebarPane(.maybeReview, selection: selection)
             }
             if shouldMount(.authorProposals) {
@@ -478,6 +478,13 @@ struct ContentView: View {
 
     private func syncPendingOperations() async {
         await syncWorker?.syncPending()
+    }
+
+    private func syncPendingOperation(_ id: UUID) async -> PendingOperationTerminalState {
+        guard let syncWorker else {
+            return .failed("Sync worker unavailable")
+        }
+        return await syncWorker.syncUntilTerminal(operationID: id)
     }
 }
 

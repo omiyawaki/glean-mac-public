@@ -45,7 +45,7 @@ enum IntakeActions {
         }
 
         static func message(from payload: [String: Any]) -> String? {
-            for key in ["detail", "error"] {
+            for key in ["detail", "error", "review_status"] {
                 if let value = payload[key] as? String {
                     let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
                     if !trimmed.isEmpty { return trimmed }
@@ -76,7 +76,9 @@ enum IntakeActions {
                 )
                 if !trimmedInput.isEmpty {
                     try await reviewAdd(doi: trimmedInput,
-                                        operationID: operation.id)
+                                        operationID: operation.id,
+                                        source: "add-paper",
+                                        requiresReviewTerminal: false)
                 }
                 if let stagedPDFPath {
                     try await attach(file: URL(fileURLWithPath: stagedPDFPath),
@@ -90,17 +92,26 @@ enum IntakeActions {
         }
     }
 
-    static func reviewAdd(doi: String, operationID: UUID? = nil) async throws {
+    static func reviewAdd(doi: String,
+                          operationID: UUID? = nil,
+                          source: String? = nil,
+                          requiresReviewTerminal: Bool = true) async throws {
+        var form = ["doi": doi]
+        if let source {
+            form["source"] = source
+        }
         try await post(path: "/api/review/add",
-                       form: ["doi": doi],
+                       form: form,
                        timeoutInterval: reviewAddTimeout,
-                       operationID: operationID)
+                       operationID: operationID,
+                       requiresReviewTerminal: requiresReviewTerminal)
     }
 
     static func reviewSkip(doi: String, operationID: UUID? = nil) async throws {
         try await post(path: "/api/review/skip",
                        form: ["doi": doi],
-                       operationID: operationID)
+                       operationID: operationID,
+                       requiresReviewTerminal: true)
     }
 
     static func authorFollow(author: String, operationID: UUID? = nil) async throws {
@@ -224,7 +235,8 @@ enum IntakeActions {
     private static func post(path: String,
                              form: [String: String],
                              timeoutInterval: TimeInterval = defaultPostTimeout,
-                             operationID: UUID? = nil) async throws {
+                             operationID: UUID? = nil,
+                             requiresReviewTerminal: Bool = false) async throws {
         var request = URLRequest(url: baseURL.appendingPathComponent(path))
         request.httpMethod = "POST"
         request.setValue("application/x-www-form-urlencoded",
@@ -244,12 +256,33 @@ enum IntakeActions {
             throw ActionError.http(http.statusCode,
                                    String(data: data, encoding: .utf8) ?? "")
         }
-        if let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-           let ok = payload["ok"] as? Bool, !ok {
+        if requiresReviewTerminal,
+           isReviewAction(path: path) {
+            guard let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                throw ActionError.server("Review action did not return a terminal status")
+            }
+            if let ok = payload["ok"] as? Bool, !ok {
+                throw ActionError.server(
+                    ActionError.message(from: payload) ?? "Action failed"
+                )
+            }
+            let status = payload["review_status"] as? String
+            let terminal = ["removed", "already_decided", "already_removed"]
+            if status == nil || !terminal.contains(status ?? "") {
+                throw ActionError.server(
+                    ActionError.message(from: payload) ?? "Review action did not finish"
+                )
+            }
+        } else if let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let ok = payload["ok"] as? Bool, !ok {
             throw ActionError.server(
                 ActionError.message(from: payload) ?? "Action failed"
             )
         }
+    }
+
+    private static func isReviewAction(path: String) -> Bool {
+        path == "/api/review/add" || path == "/api/review/skip"
     }
 
     private static func encode(form: [String: String]) -> String {

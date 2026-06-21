@@ -5,6 +5,12 @@ enum PendingOperationSyncResult: Equatable, Sendable {
     case needsReview(String)
 }
 
+enum PendingOperationTerminalState: Equatable, Sendable {
+    case synced
+    case failed(String)
+    case needsReview(String)
+}
+
 @MainActor
 final class PendingOperationSyncWorker {
     typealias Submit = @MainActor (PendingOperation) async throws -> PendingOperationSyncResult
@@ -15,6 +21,7 @@ final class PendingOperationSyncWorker {
     private let submit: Submit
     private var isSyncing = false
     private var needsFollowUpSync = false
+    private var syncWaiters: [CheckedContinuation<Void, Never>] = []
 
     init(store: PendingOperationStore,
          submit: @escaping Submit = { try await IntakeActions.submit($0) }) {
@@ -37,15 +44,47 @@ final class PendingOperationSyncWorker {
     func syncPending() async {
         if isSyncing {
             needsFollowUpSync = true
+            await withCheckedContinuation { continuation in
+                syncWaiters.append(continuation)
+            }
             return
         }
         isSyncing = true
-        defer { isSyncing = false }
+        defer {
+            isSyncing = false
+            resumeSyncWaiters()
+        }
 
         repeat {
             needsFollowUpSync = false
             await syncPendingOnce()
         } while needsFollowUpSync
+    }
+
+    @discardableResult
+    func syncUntilTerminal(operationID: UUID) async -> PendingOperationTerminalState {
+        await syncPending()
+        guard let operation = store.operations.first(where: { $0.id == operationID }) else {
+            return .synced
+        }
+        switch operation.status {
+        case .synced:
+            return .synced
+        case .failed:
+            return .failed(operation.errorMessage ?? "Sync failed")
+        case .needsReview:
+            return .needsReview(operation.errorMessage ?? "Needs review")
+        case .queued, .running:
+            return .failed("Operation did not finish syncing")
+        }
+    }
+
+    private func resumeSyncWaiters() {
+        let waiters = syncWaiters
+        syncWaiters.removeAll()
+        for waiter in waiters {
+            waiter.resume()
+        }
     }
 
     private func syncPendingOnce() async {

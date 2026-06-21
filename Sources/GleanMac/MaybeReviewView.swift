@@ -4,7 +4,7 @@ struct MaybeReviewView: View {
     let store: ReviewStore
     let actionQueue: ActionQueueStore
     let offlineCoordinator: OfflineIntakeCoordinator
-    let syncPendingOperations: () async -> Void
+    let syncPendingOperation: (UUID) async -> PendingOperationTerminalState
 
     var body: some View {
         Group {
@@ -75,13 +75,22 @@ struct MaybeReviewView: View {
         ) {
             store.optimisticallyRemove(id: id)
             do {
+                let operation: PendingOperation
                 switch kind {
                 case .add:
-                    try await offlineCoordinator.queueReviewAdd(doi: entry.doi)
+                    operation = try await offlineCoordinator.queueReviewAdd(doi: entry.doi)
                 case .skip:
-                    try await offlineCoordinator.queueReviewSkip(doi: entry.doi)
+                    operation = try await offlineCoordinator.queueReviewSkip(doi: entry.doi)
                 }
-                await syncPendingOperations()
+                let terminalState = await syncPendingOperation(operation.id)
+                switch terminalState {
+                case .synced:
+                    break
+                case .failed(let message), .needsReview(let message):
+                    store.releaseOptimisticRemoval(id: id)
+                    await store.load(silent: true)
+                    throw IntakeActions.ActionError.server(message)
+                }
 
                 // Root fix for the reappearance flash: after the server has
                 // committed the removal, immediately load the authoritative
@@ -89,10 +98,6 @@ struct MaybeReviewView: View {
                 // guard, and we get the final correct list without waiting
                 // for the 0.5 s watcher + SSE roundtrip.
                 await store.loadAfterLocalMutation(silent: true)
-
-                // Harmless on success (the prune already did the work), but
-                // keeps the call sites consistent and explicit.
-                store.releaseOptimisticRemoval(id: id)
             } catch {
                 // Failure: the server never removed the entry. Restore
                 // visibility immediately so the user can see it and retry

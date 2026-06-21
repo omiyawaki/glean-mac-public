@@ -82,6 +82,21 @@ final class PendingOperationSyncWorkerTests: XCTestCase {
         XCTAssertTrue(store.operations.isEmpty)
     }
 
+    func testSyncUntilTerminalSubmitsSpecificQueuedOperation() async throws {
+        let store = PendingOperationStore(url: tempURL())
+        let operation = try await store.enqueue(.reviewSkip(doi: "10.1000/skip"))
+        var submitted: [UUID] = []
+        let worker = PendingOperationSyncWorker(store: store) { operation in
+            submitted.append(operation.id)
+            return .synced
+        }
+
+        await worker.syncUntilTerminal(operationID: operation.id)
+
+        XCTAssertEqual(submitted, [operation.id])
+        XCTAssertTrue(store.operations.isEmpty)
+    }
+
     func testConcurrentSyncRequestsDoNotSubmitOverlappingOperations() async throws {
         let store = PendingOperationStore(url: tempURL())
         try await store.enqueue(.reviewAdd(doi: "10.1000/one"))

@@ -18,7 +18,7 @@ final class IntakeActionsTests: XCTestCase {
         let capture = RequestCapture()
         MockURLProtocol.requestHandler = { request in
             capture.timeoutInterval = request.timeoutInterval
-            return Self.ok(request: request)
+            return Self.reviewOk(request: request)
         }
 
         try await IntakeActions.reviewAdd(doi: "10.1002/qj.70192")
@@ -33,7 +33,7 @@ final class IntakeActionsTests: XCTestCase {
             capture.path = request.url?.path
             capture.operationID = request.value(forHTTPHeaderField: "X-Glean-Operation-ID")
             capture.body = Self.bodyString(from: request)
-            return Self.ok(request: request)
+            return Self.reviewOk(request: request)
         }
         let id = UUID(uuidString: "11111111-1111-1111-1111-111111111111")!
         let operation = PendingOperation(
@@ -51,6 +51,41 @@ final class IntakeActionsTests: XCTestCase {
         XCTAssertEqual(capture.path, "/api/review/add")
         XCTAssertEqual(capture.operationID, id.uuidString)
         XCTAssertEqual(capture.body, "doi=10.1000/add")
+    }
+
+    func testReviewSkipRejectsNonTerminalReviewStatus() async throws {
+        MockURLProtocol.requestHandler = { request in
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: 200,
+                httpVersion: "HTTP/1.1",
+                headerFields: ["Content-Type": "application/json"]
+            )!
+            let body = Data(
+                #"{"ok":true,"review_status":"not_found","removed_from_queue":false}"#.utf8
+            )
+            return (response, body)
+        }
+
+        do {
+            try await IntakeActions.reviewSkip(doi: "10.1000/missing")
+            XCTFail("Expected non-terminal review status to fail")
+        } catch IntakeActions.ActionError.server(let message) {
+            XCTAssertTrue(message.contains("not_found"))
+        }
+    }
+
+    func testReviewSkipRejectsMissingTerminalReviewStatus() async throws {
+        MockURLProtocol.requestHandler = { request in
+            Self.ok(request: request)
+        }
+
+        do {
+            try await IntakeActions.reviewSkip(doi: "10.1000/missing-status")
+            XCTFail("Expected missing review status to fail")
+        } catch IntakeActions.ActionError.server(let message) {
+            XCTAssertTrue(message.contains("Review action did not finish"))
+        }
     }
 
     func testSubmitAttachUploadsStagedPDF() async throws {
@@ -98,6 +133,9 @@ final class IntakeActionsTests: XCTestCase {
                 request.value(forHTTPHeaderField: "X-Glean-Operation-ID") ?? ""
             )
             capture.bodies.append(Self.bodyString(from: request) ?? "")
+            if request.url?.path == "/api/review/add" {
+                return Self.reviewOk(request: request)
+            }
             return Self.ok(request: request)
         }
         let id = UUID(uuidString: "33333333-3333-3333-3333-333333333333")!
@@ -117,7 +155,32 @@ final class IntakeActionsTests: XCTestCase {
         XCTAssertEqual(capture.paths, ["/api/review/add", "/attach"])
         XCTAssertEqual(capture.operationIDs, [id.uuidString, id.uuidString])
         XCTAssertTrue(capture.bodies[0].contains("doi=10.1000/add"))
+        XCTAssertTrue(capture.bodies[0].contains("source=add-paper"))
         XCTAssertTrue(capture.bodies[1].contains("%PDF-1.7"))
+    }
+
+    func testSubmitAddPaperDoesNotRequireReviewQueueTerminalStatus() async throws {
+        let capture = RequestCapture()
+        MockURLProtocol.requestHandler = { request in
+            capture.path = request.url?.path
+            capture.body = Self.bodyString(from: request)
+            return Self.ok(request: request)
+        }
+        let id = UUID(uuidString: "44444444-4444-4444-4444-444444444444")!
+        let operation = PendingOperation(
+            id: id,
+            createdAt: Date(timeIntervalSince1970: 0),
+            kind: .addPaper(input: "10.1000/direct", stagedPDFPath: nil),
+            status: .queued,
+            errorMessage: nil,
+            updatedAt: Date(timeIntervalSince1970: 0)
+        )
+
+        let result = try await IntakeActions.submit(operation)
+
+        XCTAssertEqual(result, .synced)
+        XCTAssertEqual(capture.path, "/api/review/add")
+        XCTAssertTrue(capture.body?.contains("source=add-paper") == true)
     }
 
     private static func ok(request: URLRequest) -> (HTTPURLResponse, Data) {
@@ -127,6 +190,18 @@ final class IntakeActionsTests: XCTestCase {
             headerFields: ["Content-Type": "application/json"]
         )!
         return (response, Data(#"{"ok":true}"#.utf8))
+    }
+
+    private static func reviewOk(request: URLRequest) -> (HTTPURLResponse, Data) {
+        let response = HTTPURLResponse(
+            url: request.url!, statusCode: 200,
+            httpVersion: "HTTP/1.1",
+            headerFields: ["Content-Type": "application/json"]
+        )!
+        return (
+            response,
+            Data(#"{"ok":true,"review_status":"removed","removed_from_queue":true}"#.utf8)
+        )
     }
 
     private static func bodyString(from request: URLRequest) -> String? {

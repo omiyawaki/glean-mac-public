@@ -462,6 +462,57 @@ final class IntakeStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testLoadAfterLocalMutationRunsFreshLoadAfterInFlightLoad() async {
+        let firstRequestStarted = expectation(description: "first request started")
+        let secondRequestStarted = expectation(description: "second request started")
+        let releaseRequest = DispatchSemaphore(value: 0)
+        let lock = NSLock()
+        var requestCount = 0
+
+        MockURLProtocol.requestHandler = { request in
+            lock.lock()
+            requestCount += 1
+            let currentRequest = requestCount
+            if currentRequest == 1 {
+                firstRequestStarted.fulfill()
+            } else if currentRequest == 2 {
+                secondRequestStarted.fulfill()
+            }
+            lock.unlock()
+
+            _ = releaseRequest.wait(timeout: .now() + 2)
+            let citekey = currentRequest == 1 ? "PreMutation" : "PostMutation"
+            return Self.ok(request: request, body: """
+            {"count":1,"entries":[{
+              "added_at":"2026-04-25T08:00:00Z",
+              "citekey":"\(citekey)",
+              "doi":"10.1000/\(citekey)",
+              "last_attempt_at":null,
+              "title":"\(citekey)",
+              "tried":[]
+            }]}
+            """)
+        }
+
+        let store = makeBacklogStore()
+        let firstLoad = Task { @MainActor in await store.load() }
+        await fulfillment(of: [firstRequestStarted], timeout: 1)
+
+        let mutationLoad = Task { @MainActor in
+            await store.loadAfterLocalMutation(silent: true)
+        }
+
+        releaseRequest.signal()
+        await fulfillment(of: [secondRequestStarted], timeout: 1)
+        releaseRequest.signal()
+        await firstLoad.value
+        await mutationLoad.value
+
+        XCTAssertEqual(requestCount, 2)
+        XCTAssertEqual(store.entries.map(\.citekey), ["PostMutation"])
+    }
+
+    @MainActor
     func testSecondLoadKeepsExistingEntriesUntilNewArrives() async {
         // First load: succeed with one entry.
         MockURLProtocol.requestHandler = { request in

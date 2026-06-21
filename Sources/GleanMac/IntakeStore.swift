@@ -43,6 +43,7 @@ where Entry.ID: Hashable {
     private var automaticRetryTask: Task<Void, Never>?
     private var automaticRetryAttempts = 0
     private var isLoadInFlight = false
+    private var loadWaiters: [CheckedContinuation<Void, Never>] = []
 
     init(endpoint: URL,
          timeoutInterval: TimeInterval = 8,
@@ -66,9 +67,15 @@ where Entry.ID: Hashable {
     /// (used by SSE-driven refreshes); the very first load still shows
     /// it because otherwise the screen would be blank.
     func load(silent: Bool = false) async {
-        guard !isLoadInFlight else { return }
+        if isLoadInFlight {
+            await waitForCurrentLoad()
+            return
+        }
         isLoadInFlight = true
-        defer { isLoadInFlight = false }
+        defer {
+            isLoadInFlight = false
+            resumeLoadWaiters()
+        }
 
         let showSpinner = !silent || !hasLoadedOnce
         if showSpinner { isLoading = true }
@@ -206,7 +213,25 @@ where Entry.ID: Hashable {
     /// The apply() auto-pruning will then clean up any remaining
     /// optimistic protection for IDs the server no longer lists.
     func loadAfterLocalMutation(silent: Bool = true) async {
+        if isLoadInFlight {
+            await waitForCurrentLoad()
+        }
         await load(silent: silent)
+    }
+
+    private func waitForCurrentLoad() async {
+        guard isLoadInFlight else { return }
+        await withCheckedContinuation { continuation in
+            loadWaiters.append(continuation)
+        }
+    }
+
+    private func resumeLoadWaiters() {
+        let waiters = loadWaiters
+        loadWaiters.removeAll()
+        for waiter in waiters {
+            waiter.resume()
+        }
     }
 
     private func holdSpinner(since started: ContinuousClock.Instant) async {
