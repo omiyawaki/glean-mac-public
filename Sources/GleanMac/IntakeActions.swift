@@ -20,6 +20,7 @@ enum IntakeActions {
 
     enum ActionError: Error, LocalizedError {
         case http(Int, String)
+        case needsReview(String)
         case server(String)
 
         var errorDescription: String? {
@@ -29,6 +30,8 @@ enum IntakeActions {
                     return "Server returned HTTP \(code): \(message)"
                 }
                 return "Server returned HTTP \(code)"
+            case .needsReview(let message):
+                return message
             case .server(let message):
                 return message
             }
@@ -87,6 +90,8 @@ enum IntakeActions {
                 }
             }
             return .synced
+        } catch ActionError.needsReview(let message) {
+            return .needsReview(message)
         } catch ActionError.http(409, let detail) {
             return .needsReview(ActionError.serverMessage(from: detail) ?? "Needs review")
         }
@@ -173,7 +178,7 @@ enum IntakeActions {
         }
         if let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
            let ok = payload["ok"] as? Bool, !ok {
-            throw ActionError.server(
+            throw ActionError.needsReview(
                 ActionError.message(from: payload) ?? "Upload failed"
             )
         }

@@ -121,6 +121,39 @@ final class IntakeActionsTests: XCTestCase {
         XCTAssertTrue(capture.body?.contains("%PDF-1.7") == true)
     }
 
+    func testSubmitAttachFailureReturnsNeedsReview() async throws {
+        let source = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("pdf")
+        try Data("%PDF-1.7\nbody".utf8).write(to: source)
+        MockURLProtocol.requestHandler = { request in
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: 200,
+                httpVersion: "HTTP/1.1",
+                headerFields: ["Content-Type": "application/json"]
+            )!
+            let body = Data(
+                #"{"ok":false,"error":"attach_failed","detail":"not found: Wang2026Mechanisms"}"#.utf8
+            )
+            return (response, body)
+        }
+        let id = UUID(uuidString: "55555555-5555-5555-5555-555555555555")!
+        let operation = PendingOperation(
+            id: id,
+            createdAt: Date(timeIntervalSince1970: 0),
+            kind: .attachPDF(stagedFilePath: source.path,
+                             citekey: "Wang2026Mechanisms"),
+            status: .queued,
+            errorMessage: nil,
+            updatedAt: Date(timeIntervalSince1970: 0)
+        )
+
+        let result = try await IntakeActions.submit(operation)
+
+        XCTAssertEqual(result, .needsReview("not found: Wang2026Mechanisms"))
+    }
+
     func testSubmitAddPaperWithStagedPDFAddsThenUploadsPDF() async throws {
         let source = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString)
