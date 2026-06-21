@@ -42,6 +42,7 @@ where Entry.ID: Hashable {
     private var responseETag: String?
     private var automaticRetryTask: Task<Void, Never>?
     private var automaticRetryAttempts = 0
+    private var isLoadInFlight = false
 
     init(endpoint: URL,
          timeoutInterval: TimeInterval = 8,
@@ -65,6 +66,10 @@ where Entry.ID: Hashable {
     /// (used by SSE-driven refreshes); the very first load still shows
     /// it because otherwise the screen would be blank.
     func load(silent: Bool = false) async {
+        guard !isLoadInFlight else { return }
+        isLoadInFlight = true
+        defer { isLoadInFlight = false }
+
         let showSpinner = !silent || !hasLoadedOnce
         if showSpinner { isLoading = true }
         let started = ContinuousClock.now
@@ -212,8 +217,7 @@ where Entry.ID: Hashable {
     }
 
     private func scheduleAutomaticRetryIfNeeded() {
-        guard hasLoadedOnce,
-              let automaticRetryDelay,
+        guard let automaticRetryDelay,
               automaticRetryAttempts < maxAutomaticRetryAttempts else { return }
         automaticRetryAttempts += 1
         automaticRetryTask?.cancel()
@@ -257,6 +261,9 @@ enum Stores {
                 "api/backlog",
                 queryItems: [URLQueryItem(name: "scope", value: "tracked")]
             ),
+            timeoutInterval: 15,
+            automaticRetryDelay: .seconds(5),
+            maxAutomaticRetryAttempts: 3,
             extract: { ($0.count, $0.entries) }
         )
     }

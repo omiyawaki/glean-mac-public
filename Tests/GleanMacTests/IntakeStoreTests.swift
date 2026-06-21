@@ -369,6 +369,99 @@ final class IntakeStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testUncachedInitialLoadRetriesAfterNetworkFailure() async {
+        var requestCount = 0
+        MockURLProtocol.requestHandler = { request in
+            requestCount += 1
+            if requestCount == 1 {
+                let response = HTTPURLResponse(
+                    url: request.url!, statusCode: 503,
+                    httpVersion: nil, headerFields: nil
+                )!
+                return (response, Data())
+            }
+            let body = """
+            {"count":1,"entries":[{
+              "added_at":"2026-04-25T08:00:00Z",
+              "citekey":"RecoveredFirstLoad",
+              "doi":"10.1000/recovered-first-load",
+              "last_attempt_at":null,
+              "title":"Recovered first load",
+              "tried":[]
+            }]}
+            """
+            return Self.ok(request: request, body: body)
+        }
+        let store = makeBacklogStore(
+            automaticRetryDelay: .milliseconds(10),
+            maxAutomaticRetryAttempts: 2
+        )
+
+        await store.load()
+
+        XCTAssertFalse(store.hasLoadedOnce)
+        XCTAssertEqual(store.lastError, "HTTP 503")
+
+        let deadline = Date().addingTimeInterval(1)
+        while requestCount < 2 && Date() < deadline {
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+
+        XCTAssertEqual(requestCount, 2)
+        XCTAssertTrue(store.hasLoadedOnce)
+        XCTAssertEqual(store.entries.map(\.citekey), ["RecoveredFirstLoad"])
+        XCTAssertNil(store.lastError)
+    }
+
+    @MainActor
+    func testOverlappingLoadsShareInFlightRequest() async {
+        let firstRequestStarted = expectation(description: "first request started")
+        let releaseRequest = DispatchSemaphore(value: 0)
+        let lock = NSLock()
+        var requestCount = 0
+        var didFulfillFirstRequest = false
+
+        MockURLProtocol.requestHandler = { request in
+            lock.lock()
+            requestCount += 1
+            if requestCount == 1 && !didFulfillFirstRequest {
+                didFulfillFirstRequest = true
+                firstRequestStarted.fulfill()
+            }
+            lock.unlock()
+
+            _ = releaseRequest.wait(timeout: .now() + 2)
+            return Self.ok(request: request, body: """
+            {"count":1,"entries":[{
+              "added_at":"2026-04-25T08:00:00Z",
+              "citekey":"SingleFlight",
+              "doi":"10.1000/single-flight",
+              "last_attempt_at":null,
+              "title":"Single flight",
+              "tried":[]
+            }]}
+            """)
+        }
+
+        let store = makeBacklogStore()
+        let firstLoad = Task { @MainActor in await store.load() }
+        await fulfillment(of: [firstRequestStarted], timeout: 1)
+
+        let secondLoad = Task { @MainActor in await store.load(silent: true) }
+        try? await Task.sleep(for: .milliseconds(100))
+
+        releaseRequest.signal()
+        releaseRequest.signal()
+        await firstLoad.value
+        await secondLoad.value
+
+        XCTAssertEqual(requestCount, 1)
+        XCTAssertTrue(store.hasLoadedOnce)
+        XCTAssertEqual(store.entries.map(\.citekey), ["SingleFlight"])
+        XCTAssertFalse(store.isLoading)
+    }
+
+    @MainActor
     func testSecondLoadKeepsExistingEntriesUntilNewArrives() async {
         // First load: succeed with one entry.
         MockURLProtocol.requestHandler = { request in
