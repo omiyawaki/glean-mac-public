@@ -278,10 +278,16 @@ struct WebViewer: NSViewRepresentable {
             webView.load(URLRequest(url: url))
         }
         registry.registerAction(id: "web.probePDFLinks") { @MainActor in
-            probe.lastResult = await evaluatePDFDebugScript(pdfProbeScript, in: webView)
+            probe.lastResult = await evaluatePDFDebugScript(
+                WebPDFLinkScripts.pdfProbeScript,
+                in: webView
+            )
         }
         registry.registerAction(id: "web.clickPDFLink") { @MainActor in
-            probe.lastResult = await evaluatePDFDebugScript(pdfClickScript, in: webView)
+            probe.lastResult = await evaluatePDFDebugScript(
+                WebPDFLinkScripts.pdfClickScript,
+                in: webView
+            )
         }
     }
 
@@ -302,92 +308,5 @@ struct WebViewer: NSViewRepresentable {
         } catch {
             return "error: \(error.localizedDescription)"
         }
-    }
-
-    private var pdfProbeScript: String {
-        """
-        (() => {
-          const norm = value => (value || "").replace(/\\s+/g, " ").trim();
-          const nodes = Array.from(document.querySelectorAll('a, button, [role="button"]'));
-          const candidates = nodes.map((element, index) => {
-            const text = norm([
-              element.innerText,
-              element.textContent,
-              element.getAttribute("aria-label"),
-              element.getAttribute("title")
-            ].filter(Boolean).join(" "));
-            const href = element.href || element.getAttribute("href") || "";
-            const haystack = `${text} ${href}`.toLowerCase();
-            let score = 0;
-            if (text.toLowerCase().includes("download pdf")) score += 100;
-            if (text.toLowerCase() === "pdf") score += 80;
-            if (text.toLowerCase().includes("pdf")) score += 30;
-            if (href.includes("/doi/epdf/")) score += 80;
-            if (href.includes("/doi/pdf/")) score += 80;
-            if (haystack.includes("pdf")) score += 10;
-            return {
-              index,
-              tag: element.tagName.toLowerCase(),
-              text: text.slice(0, 160),
-              href,
-              visible: !!(element.offsetWidth || element.offsetHeight || element.getClientRects().length),
-              score
-            };
-          }).filter(candidate => candidate.score > 0)
-            .sort((a, b) => b.score - a.score || a.index - b.index)
-            .slice(0, 12);
-          return JSON.stringify(candidates);
-        })()
-        """
-    }
-
-    private var pdfClickScript: String {
-        """
-        (() => {
-          const norm = value => (value || "").replace(/\\s+/g, " ").trim();
-          const nodes = Array.from(document.querySelectorAll('a, button, [role="button"]'));
-          const scored = nodes.map((element, index) => {
-            const text = norm([
-              element.innerText,
-              element.textContent,
-              element.getAttribute("aria-label"),
-              element.getAttribute("title")
-            ].filter(Boolean).join(" "));
-            const href = element.href || element.getAttribute("href") || "";
-            const haystack = `${text} ${href}`.toLowerCase();
-            let score = 0;
-            if (text.toLowerCase().includes("download pdf")) score += 100;
-            if (text.toLowerCase() === "pdf") score += 80;
-            if (text.toLowerCase().includes("pdf")) score += 30;
-            if (href.includes("/doi/epdf/")) score += 80;
-            if (href.includes("/doi/pdf/")) score += 80;
-            if (haystack.includes("pdf")) score += 10;
-            return { element, index, text, href, score };
-          }).filter(candidate => candidate.score > 0)
-            .sort((a, b) => b.score - a.score || a.index - b.index);
-
-          const hit = scored[0];
-          if (!hit) {
-            return JSON.stringify({ clicked: false, reason: "no PDF candidates" });
-          }
-          hit.element.scrollIntoView({ block: "center", inline: "center" });
-          // Many publishers (ScienceDirect, IOPscience, …) mark their
-          // "View PDF" anchor target="_blank". WKWebView blocks the
-          // popup by default, so the click looks like it did nothing.
-          // Strip the target attribute first so the navigation happens
-          // in the main frame and our response-download path can fire.
-          if (hit.element.tagName.toLowerCase() === "a") {
-            hit.element.removeAttribute("target");
-          }
-          hit.element.click();
-          return JSON.stringify({
-            clicked: true,
-            tag: hit.element.tagName.toLowerCase(),
-            text: hit.text.slice(0, 160),
-            href: hit.href,
-            score: hit.score
-          });
-        })()
-        """
     }
 }

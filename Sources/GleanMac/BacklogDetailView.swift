@@ -30,6 +30,7 @@ struct BacklogDetailView: View {
                     ) {
                         try await offlineCoordinator.queueAttachPDF(downloadedURL,
                                                                     citekey: ck)
+                        PDFSourceCleaner.system.trashSourcePDF(downloadedURL)
                         await syncPendingOperations()
                     }
                 } onDownloadFailed: { message in
