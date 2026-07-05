@@ -1,6 +1,17 @@
 import SwiftUI
 import WebKit
 
+struct WebViewerNavigationState {
+    private var lastRequestedURL: URL?
+
+    mutating func shouldLoad(requestedURL: URL?) -> Bool {
+        guard let requestedURL else { return false }
+        guard lastRequestedURL != requestedURL else { return false }
+        lastRequestedURL = requestedURL
+        return true
+    }
+}
+
 /// WKWebView wrapped for SwiftUI. Backed by the default persistent
 /// website data store, so cookies and cache accumulate across selections
 /// and app launches — once you clear a CloudFlare check on a publisher's
@@ -153,7 +164,7 @@ struct WebViewer: NSViewRepresentable {
     func updateNSView(_ nsView: WKWebView, context: Context) {
         context.coordinator.parent = self
         guard let url else { return }
-        if nsView.url != url {
+        if context.coordinator.navigationState.shouldLoad(requestedURL: url) {
             nsView.load(URLRequest(url: url))
         }
     }
@@ -161,6 +172,7 @@ struct WebViewer: NSViewRepresentable {
     final class Coordinator: NSObject, WKNavigationDelegate, WKDownloadDelegate {
         var parent: WebViewer
         private var destinationsByDownload = [ObjectIdentifier: URL]()
+        fileprivate var navigationState = WebViewerNavigationState()
         init(_ parent: WebViewer) {
             self.parent = parent
         }
