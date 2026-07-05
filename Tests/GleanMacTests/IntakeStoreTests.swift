@@ -71,7 +71,7 @@ final class IntakeStoreTests: XCTestCase {
     }
 
     @MainActor
-    func testBacklogFactoryRequestsTrackedScope() async {
+    func testBacklogFactoryRequestsGlobalScope() async {
         var observedURL: URL?
         MockURLProtocol.requestHandler = { request in
             observedURL = request.url
@@ -91,7 +91,7 @@ final class IntakeStoreTests: XCTestCase {
         XCTAssertEqual(components?.path, "/api/backlog")
         XCTAssertEqual(
             components?.queryItems,
-            [URLQueryItem(name: "scope", value: "tracked")]
+            [URLQueryItem(name: "scope", value: "global")]
         )
     }
 

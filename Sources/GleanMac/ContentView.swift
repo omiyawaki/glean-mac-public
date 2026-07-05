@@ -272,6 +272,9 @@ struct ContentView: View {
             if shouldMount(.libraryAll) {
                 LibraryView(store: libraryStore,
                             listState: libraryListState,
+                            actionQueue: actionQueue,
+                            offlineCoordinator: offlineCoordinator,
+                            syncPendingOperations: syncPendingOperations,
                             selection: $librarySelection,
                             query: syncedLibraryQueryBinding)
                     .sidebarPane(.libraryAll, selection: selection)
@@ -426,6 +429,9 @@ struct ContentView: View {
             LibraryDetailView(
                 citekey: librarySelection,
                 store: libraryDetailStore,
+                actionQueue: actionQueue,
+                offlineCoordinator: offlineCoordinator,
+                syncPendingOperations: syncPendingOperations,
                 inspectorPresented: $inspectorPresented,
                 query: syncedLibraryQueryBinding
             )

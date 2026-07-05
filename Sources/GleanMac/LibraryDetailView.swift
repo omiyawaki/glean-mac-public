@@ -46,11 +46,15 @@ final class LibraryDetailStore {
 struct LibraryDetailView: View {
     let citekey: String?
     let store: LibraryDetailStore
+    let actionQueue: ActionQueueStore
+    let offlineCoordinator: OfflineIntakeCoordinator
+    let syncPendingOperations: () async -> Void
     @Binding var inspectorPresented: Bool
     @Binding var query: String
     /// nil = follow system appearance, non-nil = user override.
     @State private var pdfDarkModeOverride: Bool?
     @State private var thumbnailSidebarVisible = true
+    @State private var isDropTargeted = false
     @Environment(\.colorScheme) private var systemColorScheme
 
     private var pdfDarkMode: Bool {
@@ -138,6 +142,24 @@ struct LibraryDetailView: View {
         .task(id: citekey) {
             await store.load(citekey: citekey)
         }
+        .overlay {
+            if isDropTargeted {
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .strokeBorder(Color.accentColor, lineWidth: 2)
+                    .padding(6)
+                    .allowsHitTesting(false)
+            }
+        }
+        .dropDestination(for: URL.self) { urls, _ in
+            let targetCitekey = store.record?.citekey ?? citekey
+            return BacklogPDFDropRouting.enqueueForceAttach(
+                urls: urls,
+                citekey: targetCitekey,
+                actionQueue: actionQueue,
+                offlineCoordinator: offlineCoordinator,
+                syncPendingOperations: syncPendingOperations
+            )
+        } isTargeted: { isDropTargeted = $0 }
     }
 
     private var openablePDFURL: URL? {

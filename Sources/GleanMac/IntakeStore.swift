@@ -284,7 +284,7 @@ enum Stores {
         IntakeStore(
             endpoint: intakeEndpoint(
                 "api/backlog",
-                queryItems: [URLQueryItem(name: "scope", value: "tracked")]
+                queryItems: [URLQueryItem(name: "scope", value: "global")]
             ),
             timeoutInterval: 15,
             automaticRetryDelay: .seconds(5),

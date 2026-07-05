@@ -117,24 +117,12 @@ struct BacklogDetailView: View {
 
     @discardableResult
     private func enqueueForceAttach(urls: [URL], citekey: String) -> Bool {
-        let pdfs = BacklogPDFDropRouting.pdfURLs(from: urls)
-        for url in pdfs {
-            actionQueue.enqueue(
-                title: "Attach PDF",
-                detail: url.lastPathComponent,
-                systemImage: "doc.richtext",
-                operation: {
-                    try await offlineCoordinator.queueAttachPDF(url, citekey: citekey)
-                    PDFSourceCleaner.system.trashSourcePDF(url)
-                    await syncPendingOperations()
-                },
-                forceAttach: { altCitekey in
-                    try await offlineCoordinator.queueAttachPDF(url, citekey: altCitekey)
-                    PDFSourceCleaner.system.trashSourcePDF(url)
-                    await syncPendingOperations()
-                }
-            )
-        }
-        return !pdfs.isEmpty
+        BacklogPDFDropRouting.enqueueForceAttach(
+            urls: urls,
+            citekey: citekey,
+            actionQueue: actionQueue,
+            offlineCoordinator: offlineCoordinator,
+            syncPendingOperations: syncPendingOperations
+        )
     }
 }

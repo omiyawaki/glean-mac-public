@@ -7,6 +7,9 @@ enum LibraryRowLayout {
 struct LibraryView: View {
     let store: LibraryStore
     let listState: LibraryListState
+    let actionQueue: ActionQueueStore
+    let offlineCoordinator: OfflineIntakeCoordinator
+    let syncPendingOperations: () async -> Void
     @Binding var selection: String?
     @Binding var query: String
 
@@ -54,7 +57,12 @@ struct LibraryView: View {
             ForEach(groups, id: \.year) { group in
                 Section(group.year.map { String($0) } ?? "Undated") {
                     ForEach(group.entries) { entry in
-                        LibraryRow(entry: entry).tag(entry.id)
+                        LibraryRow(entry: entry,
+                                   onDropPDFs: { urls in
+                                       enqueueForceAttach(urls: urls,
+                                                          citekey: entry.citekey)
+                                   })
+                            .tag(entry.id)
                     }
                 }
             }
@@ -66,10 +74,23 @@ struct LibraryView: View {
         .allowsHitTesting(!isHidden)
         .accessibilityHidden(isHidden)
     }
+
+    @discardableResult
+    private func enqueueForceAttach(urls: [URL], citekey: String) -> Bool {
+        BacklogPDFDropRouting.enqueueForceAttach(
+            urls: urls,
+            citekey: citekey,
+            actionQueue: actionQueue,
+            offlineCoordinator: offlineCoordinator,
+            syncPendingOperations: syncPendingOperations
+        )
+    }
 }
 
 private struct LibraryRow: View {
     let entry: LibraryEntry
+    let onDropPDFs: ([URL]) -> Bool
+    @State private var isDropTargeted = false
 
     /// Fixed-height rows keep search-clear from triggering thousands of
     /// automatic row-height measurements while still leaving room for a
@@ -85,8 +106,22 @@ private struct LibraryRow: View {
                 .lineLimit(1)
         }
         .padding(.vertical, 6)
+        .padding(.horizontal, 6)
         .frame(height: LibraryRowLayout.rowHeight, alignment: .center)
+        .background(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(isDropTargeted ? Color.accentColor.opacity(0.18) : Color.clear)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .strokeBorder(isDropTargeted ? Color.accentColor : Color.clear,
+                              lineWidth: 1.5)
+        )
+        .contentShape(Rectangle())
         .help(entry.title)
+        .dropDestination(for: URL.self) { urls, _ in
+            onDropPDFs(urls)
+        } isTargeted: { isDropTargeted = $0 }
     }
 
     private var authorLine: String {

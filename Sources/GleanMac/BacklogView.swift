@@ -46,7 +46,7 @@ struct BacklogView: View {
             if !store.hasLoadedOnce { await store.load() }
         }
         .dropDestination(for: URL.self) { urls, _ in
-            let pdfs = urls.filter { $0.pathExtension.lowercased() == "pdf" }
+            let pdfs = BacklogPDFDropRouting.pdfURLs(from: urls)
             for url in pdfs {
                 actionQueue.enqueue(
                     title: "Attach PDF",
@@ -74,24 +74,13 @@ struct BacklogView: View {
     /// chosen which backlog entry a PDF belongs to (often: pre-DOI
     /// papers, or PDFs whose body doesn't print the DOI).
     private func enqueueForceAttach(urls: [URL], citekey: String) {
-        let pdfs = urls.filter { $0.pathExtension.lowercased() == "pdf" }
-        for url in pdfs {
-            actionQueue.enqueue(
-                title: "Attach PDF",
-                detail: url.lastPathComponent,
-                systemImage: "doc.richtext",
-                operation: {
-                    try await offlineCoordinator.queueAttachPDF(url, citekey: citekey)
-                    PDFSourceCleaner.system.trashSourcePDF(url)
-                    await syncPendingOperations()
-                },
-                forceAttach: { altCitekey in
-                    try await offlineCoordinator.queueAttachPDF(url, citekey: altCitekey)
-                    PDFSourceCleaner.system.trashSourcePDF(url)
-                    await syncPendingOperations()
-                }
-            )
-        }
+        BacklogPDFDropRouting.enqueueForceAttach(
+            urls: urls,
+            citekey: citekey,
+            actionQueue: actionQueue,
+            offlineCoordinator: offlineCoordinator,
+            syncPendingOperations: syncPendingOperations
+        )
     }
 }
 
