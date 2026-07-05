@@ -132,6 +132,14 @@ private struct BacklogRow: View {
         .contentShape(Rectangle())
         .contextMenu {
             Button {
+                BacklogDOICopyAction().copyDOI(for: entry)
+            } label: {
+                Label(BacklogDOICopyAction.menuTitle,
+                      systemImage: BacklogDOICopyAction.systemImage)
+            }
+            .disabled(!BacklogDOICopyAction.isAvailable(for: entry))
+
+            Button {
                 onTryFetchingPDF()
             } label: {
                 Label(BacklogPDFManualFetchPresentation.menuTitle,
