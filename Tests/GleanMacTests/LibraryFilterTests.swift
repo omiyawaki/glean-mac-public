@@ -46,6 +46,79 @@ final class LibraryFilterTests: XCTestCase {
         XCTAssertEqual(result.map(\.citekey), ["a"])
     }
 
+    func testQueryMatchesAuthorAndYearAcrossFields() {
+        let entries = [
+            makeEntry(citekey: "a", title: "Cloud feedbacks", year: 2024,
+                      authors: [LibraryAuthor(family: "Miyawaki", given: "Osamu")]),
+            makeEntry(citekey: "b", title: "Cloud feedbacks", year: 2025,
+                      authors: [LibraryAuthor(family: "Miyawaki", given: "Osamu")]),
+            makeEntry(citekey: "c", title: "Cloud feedbacks", year: 2024,
+                      authors: [LibraryAuthor(family: "Smith", given: "Jane")]),
+        ]
+
+        let result = LibraryFilter.filter(entries, query: "Miyawaki 2024")
+
+        XCTAssertEqual(result.map(\.citekey), ["a"])
+    }
+
+    func testQueryMatchesAuthorAndPartialTitleTermsAcrossFields() {
+        let entries = [
+            makeEntry(citekey: "a",
+                      title: "Future tropical precipitation extremes",
+                      authors: [LibraryAuthor(family: "Miyawaki", given: "Osamu")]),
+            makeEntry(citekey: "b",
+                      title: "Future tropical precipitation extremes",
+                      authors: [LibraryAuthor(family: "Smith", given: "Jane")]),
+            makeEntry(citekey: "c",
+                      title: "Observed tropical circulation trends",
+                      authors: [LibraryAuthor(family: "Miyawaki", given: "Osamu")]),
+        ]
+
+        let result = LibraryFilter.filter(entries, query: "miyawaki precip")
+
+        XCTAssertEqual(result.map(\.citekey), ["a"])
+    }
+
+    func testQueryMatchesGivenAndFamilyNameTerms() {
+        let entries = [
+            makeEntry(citekey: "a", title: "Paper one",
+                      authors: [LibraryAuthor(family: "Miyawaki", given: "Osamu")]),
+            makeEntry(citekey: "b", title: "Paper two",
+                      authors: [LibraryAuthor(family: "Miyazaki", given: "Hayao")]),
+        ]
+
+        let result = LibraryFilter.filter(entries, query: "Osamu Miyawaki")
+
+        XCTAssertEqual(result.map(\.citekey), ["a"])
+    }
+
+    func testQuerySplitsPunctuationAndMatchesIdentifierFields() {
+        let entries = [
+            makeEntry(citekey: "Miyawaki2024Clouds",
+                      title: "Paper one",
+                      doi: "10.1000/cloud.2024"),
+            makeEntry(citekey: "Smith2024Ocean",
+                      title: "Paper two",
+                      doi: "10.1000/ocean.2024"),
+            makeEntry(citekey: "CloudyOcean2024",
+                      title: "Cloud response",
+                      doi: "10.1000/ocean.2024"),
+        ]
+
+        XCTAssertEqual(
+            LibraryFilter.filter(entries, query: "miyawaki, 2024").map(\.citekey),
+            ["Miyawaki2024Clouds"]
+        )
+        XCTAssertEqual(
+            LibraryFilter.filter(entries, query: "miyawaki,2024").map(\.citekey),
+            ["Miyawaki2024Clouds"]
+        )
+        XCTAssertEqual(
+            LibraryFilter.filter(entries, query: "10.1000/cloud").map(\.citekey),
+            ["Miyawaki2024Clouds"]
+        )
+    }
+
     func testQueryIsCaseInsensitive() {
         let entries = [
             makeEntry(citekey: "a", title: "ARCTIC OSCILLATION DYNAMICS"),
@@ -129,9 +202,10 @@ final class LibraryFilterTests: XCTestCase {
     private func makeEntry(citekey: String,
                            title: String,
                            year: Int? = 2024,
+                           doi: String? = nil,
                            authors: [LibraryAuthor] = []) -> LibraryEntry {
         LibraryEntry(citekey: citekey, title: title, year: year,
-                     doi: nil, authors: authors)
+                     doi: doi, authors: authors)
     }
 
     private func makeEntries(count: Int) -> [LibraryEntry] {

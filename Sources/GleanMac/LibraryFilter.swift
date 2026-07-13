@@ -10,20 +10,43 @@ enum LibraryFilter {
         let entries: [LibraryEntry]
     }
 
-    /// Filter by case-insensitive substring match on title or author
-    /// family/given. Empty / whitespace-only query returns the input
+    /// Filter by normalized terms across title, author names, year,
+    /// citekey, and DOI. Empty / whitespace-only query returns the input
     /// unchanged.
     static func filter(_ entries: [LibraryEntry], query: String) -> [LibraryEntry] {
-        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !q.isEmpty else { return entries }
-        return entries.filter { entry in
-            if entry.title.lowercased().contains(q) { return true }
+        let terms = searchTerms(for: query)
+        guard !terms.isEmpty else { return entries }
+        return entries.filter { matches($0, terms: terms) }
+    }
+
+    private static func searchTerms(for query: String) -> [String] {
+        query.lowercased()
+            .components(separatedBy: termSeparators)
+            .compactMap { rawTerm in
+                let value = rawTerm.trimmingCharacters(in: termBoundaryCharacters)
+                return value.isEmpty ? nil : value
+            }
+    }
+
+    private static func matches(_ entry: LibraryEntry, terms: [String]) -> Bool {
+        terms.allSatisfy { term in
+            if contains(entry.citekey, term) { return true }
+            if contains(entry.title, term) { return true }
+            if let year = entry.year, String(year).contains(term) { return true }
+            if let doi = entry.doi, contains(doi, term) { return true }
             return entry.authors.contains { author in
-                author.family.lowercased().contains(q)
-                    || author.given.lowercased().contains(q)
+                contains(author.family, term) || contains(author.given, term)
             }
         }
     }
+
+    private static func contains(_ value: String, _ term: String) -> Bool {
+        value.lowercased().contains(term)
+    }
+
+    private static let termSeparators = CharacterSet.whitespacesAndNewlines
+        .union(CharacterSet(charactersIn: ",;"))
+    private static let termBoundaryCharacters = CharacterSet.alphanumerics.inverted
 
     /// Group entries by year, descending. Undated entries trail.
     static func groupByYear(_ entries: [LibraryEntry]) -> [YearGroup] {
