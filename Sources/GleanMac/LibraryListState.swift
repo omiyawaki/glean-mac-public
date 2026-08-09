@@ -9,22 +9,55 @@ enum LibraryListIdentity {
     }
 }
 
+enum LibraryListRow: Identifiable, Equatable {
+    case header(id: String, title: String)
+    case paper(LibraryEntry)
+
+    var id: String {
+        switch self {
+        case .header(let id, _): "header:\(id)"
+        case .paper(let entry): "paper:\(entry.citekey)"
+        }
+    }
+
+    static func rows(for groups: [LibraryFilter.YearGroup]) -> [LibraryListRow] {
+        var rows: [LibraryListRow] = []
+        rows.reserveCapacity(groups.count + groups.reduce(0) { $0 + $1.entries.count })
+        for group in groups {
+            let title = group.year.map(String.init) ?? "Undated"
+            rows.append(.header(id: title, title: title))
+            rows.append(contentsOf: group.entries.map(LibraryListRow.paper))
+        }
+        return rows
+    }
+}
+
 @MainActor
 @Observable
 final class LibraryListState {
     struct Result: Equatable {
         let visibleCount: Int
         let grouped: [LibraryFilter.YearGroup]
+        let rows: [LibraryListRow]
         let chronology: [LibraryChronology.Marker]
+        let destinationPositions: [String: Double]
 
         init(
             visibleCount: Int,
             grouped: [LibraryFilter.YearGroup],
-            chronology: [LibraryChronology.Marker]? = nil
+            chronology: [LibraryChronology.Marker]? = nil,
+            destinationPositions: [String: Double]? = nil
         ) {
+            let layout = chronology == nil || destinationPositions == nil
+                ? LibraryChronology.layout(for: grouped)
+                : nil
             self.visibleCount = visibleCount
             self.grouped = grouped
-            self.chronology = chronology ?? LibraryChronology.markers(for: grouped)
+            self.rows = LibraryListRow.rows(for: grouped)
+            self.chronology = chronology ?? layout?.markers ?? []
+            self.destinationPositions = destinationPositions
+                ?? layout?.destinationPositions
+                ?? [:]
         }
     }
 
@@ -37,8 +70,12 @@ final class LibraryListState {
 
     var allGrouped: [LibraryFilter.YearGroup] = []
     var filteredGrouped: [LibraryFilter.YearGroup] = []
+    var allRows: [LibraryListRow] = []
+    var filteredRows: [LibraryListRow] = []
     var allChronology: [LibraryChronology.Marker] = []
     var filteredChronology: [LibraryChronology.Marker] = []
+    var allDestinationPositions: [String: Double] = [:]
+    var filteredDestinationPositions: [String: Double] = [:]
     var visibleCount: Int = 0
     var mode: Mode = .all
 
@@ -67,7 +104,9 @@ final class LibraryListState {
         if entries != lastEntries {
             let result = recompute(entries, "")
             allGrouped = result.grouped
+            allRows = result.rows
             allChronology = result.chronology
+            allDestinationPositions = result.destinationPositions
             allVisibleCount = result.visibleCount
         }
 
@@ -77,7 +116,9 @@ final class LibraryListState {
         } else {
             let result = recompute(entries, query)
             filteredGrouped = result.grouped
+            filteredRows = result.rows
             filteredChronology = result.chronology
+            filteredDestinationPositions = result.destinationPositions
             filteredVisibleCount = result.visibleCount
             mode = .filtered
             visibleCount = filteredVisibleCount

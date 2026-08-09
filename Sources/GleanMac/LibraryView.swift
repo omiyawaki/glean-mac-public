@@ -1,8 +1,16 @@
 import AppleAppDesignSystem
 import SwiftUI
+import os
+
+private let libraryRailLog = Logger(
+    subsystem: "com.miyawaki.glean-mac",
+    category: "library-rail"
+)
 
 enum LibraryRowLayout {
     static let rowHeight: CGFloat = 72
+    static let separatorHeight: CGFloat = 1
+    static let sectionHeaderHeight: CGFloat = 34
 }
 
 struct LibraryView: View {
@@ -15,6 +23,11 @@ struct LibraryView: View {
     let showRelations: (LibraryEntry, LibraryRelationKind) -> Void
     @Binding var selection: String?
     @Binding var query: String
+    @State private var allScrollController = IndexedNativeScrollController()
+    @State private var filteredScrollController = IndexedNativeScrollController()
+    @State private var allRailJumpStarted: ContinuousClock.Instant?
+    @State private var filteredRailJumpStarted: ContinuousClock.Instant?
+    @State private var actionErrorMessage: String?
 
     var body: some View {
         Group {
@@ -35,77 +48,187 @@ struct LibraryView: View {
                 let isFiltering = LibraryListIdentity.value(forQuery: query) == "library-filtered"
                 ZStack {
                     libraryList(
-                        groups: listState.allGrouped,
+                        rows: listState.allRows,
                         chronology: listState.allChronology,
+                        destinationPositions: listState.allDestinationPositions,
                         identity: "library-all",
-                        isHidden: isFiltering
+                        isHidden: isFiltering,
+                        scrollController: allScrollController,
+                        railJumpStarted: $allRailJumpStarted
                     )
                     libraryList(
-                        groups: listState.filteredGrouped,
+                        rows: listState.filteredRows,
                         chronology: listState.filteredChronology,
+                        destinationPositions: listState.filteredDestinationPositions,
                         identity: "library-filtered",
-                        isHidden: !isFiltering
+                        isHidden: !isFiltering,
+                        scrollController: filteredScrollController,
+                        railJumpStarted: $filteredRailJumpStarted
                     )
                 }
                 .animation(nil, value: isFiltering)
             }
         }
+        .alert(
+            "Paper action failed",
+            isPresented: Binding(
+                get: { actionErrorMessage != nil },
+                set: { if !$0 { actionErrorMessage = nil } }
+            )
+        ) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(actionErrorMessage ?? "")
+        }
     }
 
     @ViewBuilder
     private func libraryList(
-        groups: [LibraryFilter.YearGroup],
+        rows: [LibraryListRow],
         chronology: [LibraryChronology.Marker],
+        destinationPositions: [String: Double],
         identity: String,
-        isHidden: Bool
+        isHidden: Bool,
+        scrollController: IndexedNativeScrollController,
+        railJumpStarted: Binding<ContinuousClock.Instant?>
     ) -> some View {
-        ScrollViewReader { proxy in
-            List(selection: $selection) {
-                ForEach(groups, id: \.year) { group in
-                    Section(group.year.map { String($0) } ?? "Undated") {
-                        ForEach(group.entries) { entry in
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 0) {
+                IndexedNativeScrollTargetReader(controller: scrollController)
+                    .frame(height: 0)
+
+                ForEach(rows) { row in
+                    switch row {
+                    case .header(_, let title):
+                        Text(title)
+                            .font(.headline)
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 12)
+                            .frame(
+                                maxWidth: .infinity,
+                                minHeight: LibraryRowLayout.sectionHeaderHeight,
+                                alignment: .leading
+                            )
+                            .background(.bar)
+                            .accessibilityAddTraits(.isHeader)
+
+                    case .paper(let entry):
+                        VStack(spacing: 0) {
                             LibraryRow(entry: entry,
                                        loadedRecord: loadedRecord,
                                        showRelations: showRelations,
+                                       reportActionError: { message in
+                                           actionErrorMessage = message
+                                       },
                                        onDropPDFs: { urls in
                                            enqueueForceAttach(urls: urls,
                                                               citekey: entry.citekey)
                                        })
-                                .id(entry.citekey)
-                                .tag(entry.id)
+                                .background {
+                                    if selection == entry.id {
+                                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                            .fill(Color.accentColor.opacity(0.22))
+                                            .padding(.horizontal, 5)
+                                    }
+                                }
+                                .contentShape(Rectangle())
+                                .onTapGesture {
+                                    selection = entry.id
+                                }
+                                .accessibilityAddTraits(
+                                    selection == entry.id ? .isSelected : []
+                                )
+
+                            Divider()
+                                .padding(.leading, 12)
+                                .frame(height: LibraryRowLayout.separatorHeight)
                         }
+                        .frame(
+                            height: LibraryRowLayout.rowHeight
+                                + LibraryRowLayout.separatorHeight
+                        )
+                        .id(entry.citekey)
+                        .accessibilityElement(children: .contain)
                     }
                 }
             }
-            .overlay(alignment: .trailing) {
-                if chronology.count > 1 {
-                    IndexedScrollRail(
-                        markers: chronology.map {
-                            IndexedScrollRailMarker(
-                                id: $0.id,
-                                label: $0.label,
-                                majorLabel: $0.majorLabel
-                            )
-                        },
-                        onSelect: { marker in
-                            proxy.scrollTo(marker.id, anchor: .top)
-                        }
-                    )
-                    .padding(.vertical, 10)
-                    .padding(.trailing, 8)
-                }
-            }
-            .onChange(of: selection) { _, citekey in
-                guard let citekey else { return }
-                proxy.scrollTo(citekey, anchor: .center)
-            }
-            .animation(nil, value: groups)
-            .id(identity)
-            .environment(\.defaultMinListRowHeight, LibraryRowLayout.rowHeight)
         }
+        .onScrollGeometryChange(for: CGFloat.self) { geometry in
+            geometry.contentOffset.y
+        } action: { oldOffset, newOffset in
+            guard oldOffset != newOffset,
+                  let started = railJumpStarted.wrappedValue else { return }
+            railJumpStarted.wrappedValue = nil
+            let milliseconds = (ContinuousClock.now - started) / .milliseconds(1)
+            libraryRailLog.notice(
+                "rail first-frame response ms=\(milliseconds, privacy: .public)"
+            )
+        }
+        .overlay(alignment: .trailing) {
+            if chronology.count > 1 {
+                IndexedScrollRail(
+                    markers: chronology.map {
+                        IndexedScrollRailMarker(
+                            id: $0.id,
+                            label: $0.label,
+                            majorLabel: $0.majorLabel,
+                            destinationPosition: $0.contentPosition
+                        )
+                    },
+                    tickStrideCandidates: [1, 3, 6, 12, 24, 60, 120, 240, 600],
+                    // One base tick per publication year. Hover magnification
+                    // reveals the twelve monthly positions between them.
+                    minimumTickStride: 12,
+                    tickAlignment: chronology.firstIndex(where: \.isYearBoundary) ?? 0,
+                    onSelect: { marker in
+                        guard let destinationPosition = marker.destinationPosition else {
+                            return
+                        }
+                        jump(
+                            to: destinationPosition,
+                            scrollController: scrollController,
+                            railJumpStarted: railJumpStarted,
+                            measureResponse: true
+                        )
+                    }
+                )
+                .padding(.vertical, 12)
+                // Keep the fast-scroll rail beside, rather than beneath, the
+                // system scrollbar and its top/bottom end furniture.
+                .padding(.trailing, 22)
+            }
+        }
+        .onChange(of: selection) { _, citekey in
+            guard let citekey,
+                  let position = destinationPositions[citekey] else { return }
+            jump(
+                to: position,
+                scrollController: scrollController,
+                railJumpStarted: railJumpStarted,
+                measureResponse: false
+            )
+        }
+        .animation(nil, value: rows)
+        .id(identity)
         .opacity(isHidden ? 0 : 1)
         .allowsHitTesting(!isHidden)
         .accessibilityHidden(isHidden)
+    }
+
+    private func jump(
+        to contentPosition: Double,
+        scrollController: IndexedNativeScrollController,
+        railJumpStarted: Binding<ContinuousClock.Instant?>,
+        measureResponse: Bool
+    ) {
+        if measureResponse {
+            railJumpStarted.wrappedValue = ContinuousClock.now
+        }
+        guard scrollController.scroll(toContentPosition: contentPosition) else {
+            railJumpStarted.wrappedValue = nil
+            libraryRailLog.error("native rail scroll target unavailable")
+            return
+        }
     }
 
     @discardableResult
@@ -124,9 +247,9 @@ private struct LibraryRow: View {
     let entry: LibraryEntry
     let loadedRecord: LibraryRecord?
     let showRelations: (LibraryEntry, LibraryRelationKind) -> Void
+    let reportActionError: (String) -> Void
     let onDropPDFs: ([URL]) -> Bool
     @State private var isDropTargeted = false
-    @State private var actionErrorMessage: String?
 
     /// Fixed-height rows keep search-clear from triggering thousands of
     /// automatic row-height measurements while still leaving room for a
@@ -235,7 +358,7 @@ private struct LibraryRow: View {
                             loadedRecord: loadedRecord
                         )
                     } catch {
-                        actionErrorMessage = error.localizedDescription
+                        reportActionError(error.localizedDescription)
                     }
                 }
             } label: {
@@ -254,7 +377,7 @@ private struct LibraryRow: View {
                             loadedRecord: loadedRecord
                         )
                     } catch {
-                        actionErrorMessage = error.localizedDescription
+                        reportActionError(error.localizedDescription)
                     }
                 }
             } label: {
@@ -277,17 +400,6 @@ private struct LibraryRow: View {
                     Label(kind.menuTitle, systemImage: kind.systemImage)
                 }
             }
-        }
-        .alert(
-            "Paper action failed",
-            isPresented: Binding(
-                get: { actionErrorMessage != nil },
-                set: { if !$0 { actionErrorMessage = nil } }
-            )
-        ) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(actionErrorMessage ?? "")
         }
         .dropDestination(for: URL.self) { urls, _ in
             onDropPDFs(urls)
