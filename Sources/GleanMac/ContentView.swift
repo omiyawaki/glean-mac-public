@@ -35,6 +35,7 @@ struct ContentView: View {
     @State private var backlogSelection: String?
     @State private var librarySelection: String?
     @State private var libraryQuery = ""
+    @State private var libraryRelationRequest: LibraryRelationRequest?
     @State private var inspectorPresented = false
     @State private var didApplyLaunchSelection = false
     @State private var mountedSidebarItems = MountedSidebarItems(initial: .backlog)
@@ -67,6 +68,16 @@ struct ContentView: View {
         .inspector(isPresented: $inspectorPresented) {
             inspector
                 .inspectorColumnWidth(min: 280, ideal: 340, max: 480)
+        }
+        .sheet(item: $libraryRelationRequest) { request in
+            LibraryRelationsView(
+                request: request,
+                libraryEntries: libraryStore.entries,
+                onOpenLibraryPaper: { citekey in
+                    selection = .libraryAll
+                    librarySelection = citekey
+                }
+            )
         }
         .toolbar {
             // Use the ToolbarContent wrapper (matches the Laps app and the
@@ -291,6 +302,12 @@ struct ContentView: View {
                             offlineCoordinator: offlineCoordinator,
                             syncPendingOperations: syncPendingOperations,
                             loadedRecord: libraryDetailStore.record,
+                            showRelations: { entry, kind in
+                                libraryRelationRequest = LibraryRelationRequest(
+                                    source: entry,
+                                    kind: kind
+                                )
+                            },
                             selection: $librarySelection,
                             query: syncedLibraryQueryBinding)
                     .sidebarPane(.libraryAll, selection: selection)

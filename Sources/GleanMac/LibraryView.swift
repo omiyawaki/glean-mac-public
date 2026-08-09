@@ -11,6 +11,7 @@ struct LibraryView: View {
     let offlineCoordinator: OfflineIntakeCoordinator
     let syncPendingOperations: () async -> Void
     let loadedRecord: LibraryRecord?
+    let showRelations: (LibraryEntry, LibraryRelationKind) -> Void
     @Binding var selection: String?
     @Binding var query: String
 
@@ -60,6 +61,7 @@ struct LibraryView: View {
                     ForEach(group.entries) { entry in
                         LibraryRow(entry: entry,
                                    loadedRecord: loadedRecord,
+                                   showRelations: showRelations,
                                    onDropPDFs: { urls in
                                        enqueueForceAttach(urls: urls,
                                                           citekey: entry.citekey)
@@ -92,8 +94,10 @@ struct LibraryView: View {
 private struct LibraryRow: View {
     let entry: LibraryEntry
     let loadedRecord: LibraryRecord?
+    let showRelations: (LibraryEntry, LibraryRelationKind) -> Void
     let onDropPDFs: ([URL]) -> Bool
     @State private var isDropTargeted = false
+    @State private var actionErrorMessage: String?
 
     /// Fixed-height rows keep search-clear from triggering thousands of
     /// automatic row-height measurements while still leaving room for a
@@ -136,6 +140,36 @@ private struct LibraryRow: View {
                 Label(LibraryCopyAction.copyCiteIDMenuTitle, systemImage: "number")
             }
 
+            Button {
+                LibraryExportAction().copyMarkdownCitation(from: entry)
+            } label: {
+                Label(
+                    LibraryExportAction.copyMarkdownCitationMenuTitle,
+                    systemImage: "at"
+                )
+            }
+
+            Button {
+                LibraryExportAction().copyMarkdownLink(from: entry)
+            } label: {
+                Label(
+                    LibraryExportAction.copyMarkdownLinkMenuTitle,
+                    systemImage: "link"
+                )
+            }
+            .disabled(!LibraryExportAction.canCopyMarkdownLink(from: entry))
+
+            Button {
+                Task {
+                    await LibraryExportAction().copyBibTeX(
+                        from: entry,
+                        loadedRecord: loadedRecord
+                    )
+                }
+            } label: {
+                Label(LibraryExportAction.copyBibTeXMenuTitle, systemImage: "curlybraces")
+            }
+
             Menu {
                 ForEach(LibraryCitationStyle.allCases) { style in
                     Button(style.menuTitle) {
@@ -151,6 +185,80 @@ private struct LibraryRow: View {
             } label: {
                 Label(LibraryCopyAction.copyCitationMenuTitle, systemImage: "text.quote")
             }
+
+            Divider()
+
+            Button {
+                LibraryExternalLinkAction().openDOI(from: entry)
+            } label: {
+                Label(
+                    LibraryExternalLinkAction.openDOIMenuTitle,
+                    systemImage: "arrow.up.right.square"
+                )
+            }
+            .disabled(!LibraryExternalLinkAction.canOpenDOI(from: entry))
+
+            Button {
+                Task {
+                    do {
+                        try await LibraryPaperFileAction().openPDF(
+                            for: entry,
+                            loadedRecord: loadedRecord
+                        )
+                    } catch {
+                        actionErrorMessage = error.localizedDescription
+                    }
+                }
+            } label: {
+                Label(LibraryPaperFileAction.openPDFMenuTitle, systemImage: "doc.richtext")
+            }
+            .disabled(LibraryPaperFileAction.hasKnownPDF(
+                for: entry,
+                loadedRecord: loadedRecord
+            ) == false)
+
+            Button {
+                Task {
+                    do {
+                        try await LibraryPaperFileAction().revealPDF(
+                            for: entry,
+                            loadedRecord: loadedRecord
+                        )
+                    } catch {
+                        actionErrorMessage = error.localizedDescription
+                    }
+                }
+            } label: {
+                Label(
+                    LibraryPaperFileAction.revealPDFMenuTitle,
+                    systemImage: "folder"
+                )
+            }
+            .disabled(LibraryPaperFileAction.hasKnownPDF(
+                for: entry,
+                loadedRecord: loadedRecord
+            ) == false)
+
+            Divider()
+
+            ForEach([LibraryRelationKind.references, .citedBy]) { kind in
+                Button {
+                    showRelations(entry, kind)
+                } label: {
+                    Label(kind.menuTitle, systemImage: kind.systemImage)
+                }
+            }
+        }
+        .alert(
+            "Paper action failed",
+            isPresented: Binding(
+                get: { actionErrorMessage != nil },
+                set: { if !$0 { actionErrorMessage = nil } }
+            )
+        ) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(actionErrorMessage ?? "")
         }
         .dropDestination(for: URL.self) { urls, _ in
             onDropPDFs(urls)

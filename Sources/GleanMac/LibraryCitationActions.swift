@@ -304,7 +304,7 @@ struct LibraryCitationFormatter {
         init(entry: LibraryEntry) {
             title = entry.title
             year = entry.year
-            doi = Self.normalizedDOI(entry.doi)
+            doi = LibraryDOI.normalized(entry.doi)
             journal = nil
             volume = nil
             issue = nil
@@ -315,24 +315,12 @@ struct LibraryCitationFormatter {
         init(record: LibraryRecord) {
             title = record.title
             year = record.year
-            doi = Self.normalizedDOI(record.doi)
+            doi = LibraryDOI.normalized(record.doi)
             journal = Self.cleaned(record.journal)
             volume = Self.cleaned(record.volume)
             issue = Self.cleaned(record.issue)
             pages = Self.cleaned(record.pages)
             authors = record.authors
-        }
-
-        private static func normalizedDOI(_ value: String?) -> String? {
-            guard var value = cleaned(value) else { return nil }
-            for prefix in ["https://doi.org/", "http://doi.org/", "doi:"] {
-                if value.lowercased().hasPrefix(prefix) {
-                    value.removeFirst(prefix.count)
-                    value = value.trimmingCharacters(in: .whitespacesAndNewlines)
-                    break
-                }
-            }
-            return value.isEmpty ? nil : value
         }
 
         private static func cleaned(_ value: String?) -> String? {
@@ -399,15 +387,7 @@ struct LibraryCopyAction {
     }
 
     private static func copyableDOI(from entry: LibraryEntry?) -> String? {
-        var doi = entry?.doi?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        for prefix in ["https://doi.org/", "http://doi.org/", "doi:"] {
-            if doi.lowercased().hasPrefix(prefix) {
-                doi.removeFirst(prefix.count)
-                doi = doi.trimmingCharacters(in: .whitespacesAndNewlines)
-                break
-            }
-        }
-        return doi.isEmpty ? nil : doi
+        LibraryDOI.normalized(entry?.doi)
     }
 
     private static func writeToPasteboard(_ value: String) {
