@@ -28,6 +28,12 @@ final class LibraryChronologyTests: XCTestCase {
         XCTAssertEqual(markers.last?.label, "January 2025")
         XCTAssertEqual(markers.first?.majorLabel, "2026")
         XCTAssertEqual(markers.last?.majorLabel, "2025")
+        XCTAssertEqual(markers.first?.railPosition, 0)
+        XCTAssertEqual(markers.last?.railPosition, 1)
+        XCTAssertEqual(
+            markers.map(\.railPosition),
+            markers.map(\.railPosition).sorted()
+        )
         XCTAssertEqual(layout.destinationPositions["MayNew"], 0)
         XCTAssertNotNil(layout.destinationPositions["Legacy"])
     }
@@ -42,6 +48,7 @@ final class LibraryChronologyTests: XCTestCase {
                     destinationID: "Unknown",
                     label: "Undated",
                     majorLabel: "Undated",
+                    railPosition: 1,
                     contentPosition: 0,
                     isYearBoundary: false
                 )
@@ -59,6 +66,30 @@ final class LibraryChronologyTests: XCTestCase {
             LibraryChronology.markers(for: groups).compactMap(\.majorLabel),
             ["2026", "2020", "2010", "2000", "1998"]
         )
+    }
+
+    func testDensityWeightedScaleExpandsOccupiedMonthsAndCompressesEmptyHistory() throws {
+        var entries = [
+            entry("Newest", year: 2026, publishedAt: "2026-01-01"),
+            entry("Oldest", year: 1900, publishedAt: "1900-01-01"),
+        ]
+        entries.append(contentsOf: (0..<12).map { index in
+            entry("Dense\(index)", year: 2025, publishedAt: "2025-12-15")
+        })
+
+        let markers = LibraryChronology.markers(
+            for: LibraryFilter.groupByYear(entries)
+        )
+        let denseMonth = try XCTUnwrap(
+            markers.first { $0.id == "month:2025-12" }
+        )
+        let sparseHistory = try XCTUnwrap(
+            markers.first { $0.id == "month:1950-01" }
+        )
+
+        XCTAssertGreaterThan(denseMonth.railPosition, 0.25)
+        XCTAssertGreaterThan(sparseHistory.railPosition, 0.75)
+        XCTAssertEqual(markers.map(\.railPosition), markers.map(\.railPosition).sorted())
     }
 
     private func entry(

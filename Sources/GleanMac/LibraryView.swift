@@ -11,6 +11,10 @@ enum LibraryRowLayout {
     static let rowHeight: CGFloat = 72
     static let separatorHeight: CGFloat = 1
     static let sectionHeaderHeight: CGFloat = 34
+    /// The collapsed rail occupies 22 points and sits 22 points inward from
+    /// the native scrollbar. This gutter gives both controls permanent space
+    /// without sacrificing the expanded overlay behavior.
+    static let collapsedRailGutter: CGFloat = 48
 }
 
 struct LibraryView: View {
@@ -113,7 +117,7 @@ struct LibraryView: View {
                             .accessibilityAddTraits(.isHeader)
 
                     case .paper(let entry):
-                        VStack(spacing: 0) {
+                        VStack(alignment: .leading, spacing: 0) {
                             LibraryRow(entry: entry,
                                        loadedRecord: loadedRecord,
                                        showRelations: showRelations,
@@ -124,6 +128,7 @@ struct LibraryView: View {
                                            enqueueForceAttach(urls: urls,
                                                               citekey: entry.citekey)
                                        })
+                                .frame(maxWidth: .infinity, alignment: .leading)
                                 .background {
                                     if selection == entry.id {
                                         RoundedRectangle(cornerRadius: 6, style: .continuous)
@@ -153,6 +158,11 @@ struct LibraryView: View {
                 }
             }
         }
+        .contentMargins(
+            .trailing,
+            chronology.count > 1 ? LibraryRowLayout.collapsedRailGutter : 0,
+            for: .scrollContent
+        )
         .onScrollGeometryChange(for: CGFloat.self) { geometry in
             geometry.contentOffset.y
         } action: { oldOffset, newOffset in
@@ -172,6 +182,7 @@ struct LibraryView: View {
                             id: $0.id,
                             label: $0.label,
                             majorLabel: $0.majorLabel,
+                            railPosition: $0.railPosition,
                             destinationPosition: $0.contentPosition
                         )
                     },

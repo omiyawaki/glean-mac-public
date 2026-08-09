@@ -6,6 +6,7 @@ enum LibraryChronology {
         let destinationID: String
         let label: String
         let majorLabel: String?
+        let railPosition: Double
         let contentPosition: Double
         let isYearBoundary: Bool
     }
@@ -18,7 +19,13 @@ enum LibraryChronology {
     private struct Destination {
         let citekey: String
         let monthOrdinal: Int?
+        let yearOnlyDensityYear: Int?
         let contentPosition: Double
+    }
+
+    private struct PublicationPlacement {
+        let navigationMonthOrdinal: Int?
+        let yearOnlyDensityYear: Int?
     }
 
     private static let monthNames = [
@@ -31,11 +38,13 @@ enum LibraryChronology {
     /// normalized, pixel-based jumps land close to the first paper in a
     /// month without asking SwiftUI to resolve thousands of semantic row IDs.
     private static let sectionHeaderWeight = 0.5
+    private static let calendarShare = 0.30
+    private static let undatedRailGap = 0.03
 
-    /// Builds a true calendar scale in visible list order. The scale contains
-    /// every month between the newest and oldest dated library entries, so
-    /// equal distances always represent equal spans of publication time.
-    /// Empty months route to the next older paper. Year-only metadata is
+    /// Builds a complete monthly chronology in visible-list order, then lays
+    /// it out with a calendar-and-library-density blend. Empty months remain
+    /// reachable, but sparse history does not consume most of the available
+    /// rail. Empty months route to the next older paper. Year-only metadata is
     /// placed at January for navigation only; no date is written to metadata.
     static func layout(for groups: [LibraryFilter.YearGroup]) -> Layout {
         let entryCount = groups.reduce(0) { $0 + $1.entries.count }
@@ -54,12 +63,14 @@ enum LibraryChronology {
         for group in groups {
             visualOffset += sectionHeaderWeight
             for entry in group.entries {
+                let placement = publicationPlacement(for: entry, groupYear: group.year)
                 let position = destinations.isEmpty
                     ? 0
                     : min(max(visualOffset / totalWeight, 0), 1)
                 let destination = Destination(
                     citekey: entry.citekey,
-                    monthOrdinal: monthOrdinal(for: entry, groupYear: group.year),
+                    monthOrdinal: placement.navigationMonthOrdinal,
+                    yearOnlyDensityYear: placement.yearOnlyDensityYear,
                     contentPosition: position
                 )
                 destinations.append(destination)
@@ -73,9 +84,26 @@ enum LibraryChronology {
 
         if let newestMonth = dated.first?.monthOrdinal,
            let oldestMonth = dated.last?.monthOrdinal {
+            let densityCounts = densityCounts(
+                for: dated,
+                newestMonth: newestMonth,
+                oldestMonth: oldestMonth
+            )
+            let railPositions = densityWeightedRailPositions(
+                newestMonth: newestMonth,
+                oldestMonth: oldestMonth,
+                densityCounts: densityCounts
+            )
+            let datedRailScale = destinations.contains { $0.monthOrdinal == nil }
+                ? 1 - undatedRailGap
+                : 1
             markers.reserveCapacity(newestMonth - oldestMonth + 2)
             var cursor = 0
-            for ordinal in stride(from: newestMonth, through: oldestMonth, by: -1) {
+            for (index, ordinal) in stride(
+                from: newestMonth,
+                through: oldestMonth,
+                by: -1
+            ).enumerated() {
                 while cursor < dated.count - 1,
                       let cursorMonth = dated[cursor].monthOrdinal,
                       cursorMonth > ordinal {
@@ -93,6 +121,7 @@ enum LibraryChronology {
                     destinationID: destination.citekey,
                     label: "\(monthNames[month - 1]) \(year)",
                     majorLabel: majorLabel,
+                    railPosition: railPositions[index] * datedRailScale,
                     contentPosition: destination.contentPosition,
                     isYearBoundary: month == 1
                 ))
@@ -105,6 +134,7 @@ enum LibraryChronology {
                 destinationID: undated.citekey,
                 label: "Undated",
                 majorLabel: "Undated",
+                railPosition: 1,
                 contentPosition: undated.contentPosition,
                 isYearBoundary: false
             ))
@@ -120,15 +150,91 @@ enum LibraryChronology {
         layout(for: groups).markers
     }
 
-    private static func monthOrdinal(
+    private static func publicationPlacement(
         for entry: LibraryEntry,
         groupYear: Int?
-    ) -> Int? {
+    ) -> PublicationPlacement {
         if let parts = exactMonth(from: entry.publishedAt) {
-            return parts.year * 12 + parts.month - 1
+            return PublicationPlacement(
+                navigationMonthOrdinal: parts.year * 12 + parts.month - 1,
+                yearOnlyDensityYear: nil
+            )
         }
-        guard let year = groupYear ?? entry.year else { return nil }
-        return year * 12
+        guard let year = groupYear ?? entry.year else {
+            return PublicationPlacement(
+                navigationMonthOrdinal: nil,
+                yearOnlyDensityYear: nil
+            )
+        }
+        return PublicationPlacement(
+            navigationMonthOrdinal: year * 12,
+            yearOnlyDensityYear: year
+        )
+    }
+
+    /// Exact dates contribute to their month. Year-only records contribute
+    /// one twelfth to each month of that year, avoiding an artificial January
+    /// spike while exact-date backfill is still running.
+    private static func densityCounts(
+        for destinations: [Destination],
+        newestMonth: Int,
+        oldestMonth: Int
+    ) -> [Int: Double] {
+        var result: [Int: Double] = [:]
+        for destination in destinations {
+            if let year = destination.yearOnlyDensityYear {
+                for monthOffset in 0..<12 {
+                    let ordinal = year * 12 + monthOffset
+                    guard (oldestMonth...newestMonth).contains(ordinal) else { continue }
+                    result[ordinal, default: 0] += 1.0 / 12.0
+                }
+            } else if let ordinal = destination.monthOrdinal {
+                result[ordinal, default: 0] += 1
+            }
+        }
+        return result
+    }
+
+    /// Blends a real calendar axis with the cumulative square-root paper
+    /// density. Empty spans keep 30% of their linear duration while occupied
+    /// months receive the remaining space without letting very large months
+    /// dominate in direct proportion to their paper count.
+    private static func densityWeightedRailPositions(
+        newestMonth: Int,
+        oldestMonth: Int,
+        densityCounts: [Int: Double]
+    ) -> [Double] {
+        let monthCount = newestMonth - oldestMonth + 1
+        guard monthCount > 1 else { return [0] }
+
+        let masses = stride(from: newestMonth, through: oldestMonth, by: -1).map {
+            sqrt(densityCounts[$0, default: 0])
+        }
+        let intervalMasses = zip(masses, masses.dropFirst()).map { lhs, rhs in
+            (lhs + rhs) / 2
+        }
+        let totalDensityMass = intervalMasses.reduce(0, +)
+        var cumulativeDensityMass = 0.0
+        var positions: [Double] = []
+        positions.reserveCapacity(monthCount)
+
+        for index in 0..<monthCount {
+            let calendarPosition = Double(index) / Double(monthCount - 1)
+            let densityPosition = totalDensityMass > 0
+                ? cumulativeDensityMass / totalDensityMass
+                : calendarPosition
+            positions.append(
+                calendarShare * calendarPosition
+                    + (1 - calendarShare) * densityPosition
+            )
+            if index < intervalMasses.count {
+                cumulativeDensityMass += intervalMasses[index]
+            }
+        }
+
+        positions[0] = 0
+        positions[positions.count - 1] = 1
+        return positions
     }
 
     private static func exactMonth(from value: String?) -> (year: Int, month: Int)? {
