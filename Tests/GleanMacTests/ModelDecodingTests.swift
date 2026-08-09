@@ -121,6 +121,7 @@ final class ModelDecodingTests: XCTestCase {
               "citekey": "Abc2024Test",
               "title": "Some paper",
               "year": 2024,
+              "added_at": "2026-05-01",
               "doi": "10.1000/x",
               "authors": [{"family": "Doe", "given": "Jane"}]
             },
@@ -137,6 +138,8 @@ final class ModelDecodingTests: XCTestCase {
         let payload = try decode(LibraryResponse.self, from: json)
         XCTAssertEqual(payload.entries.count, 2)
         XCTAssertEqual(payload.entries[0].year, 2024)
+        XCTAssertEqual(payload.entries[0].addedAt, "2026-05-01")
+        XCTAssertNil(payload.entries[1].addedAt)
         XCTAssertNil(payload.entries[1].year)
         XCTAssertNil(payload.entries[1].doi)
     }

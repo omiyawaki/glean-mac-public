@@ -37,7 +37,45 @@ final class LocalLibraryIndexReaderTests: XCTestCase {
         XCTAssertEqual(response.entries.map(\.citekey), ["Later2026Paper", "UndatedPaper"])
         XCTAssertEqual(response.entries[0].authors.map(\.family), ["Later", "Second"])
         XCTAssertEqual(response.entries[0].authors[1].given, "")
+        XCTAssertNil(response.entries[0].addedAt)
         XCTAssertNil(response.entries[1].year)
+    }
+
+    func testReadOrdersSameYearByAddedAtDescending() async throws {
+        let db = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("sqlite")
+        try runSQLite(db: db, sql: """
+        CREATE TABLE records (
+          citekey TEXT PRIMARY KEY,
+          title TEXT NOT NULL,
+          year INTEGER,
+          doi TEXT,
+          added_at TEXT
+        );
+        CREATE TABLE authors (
+          citekey TEXT,
+          ord INTEGER,
+          family TEXT,
+          given TEXT
+        );
+        INSERT INTO records(citekey, title, year, doi, added_at)
+          VALUES ('Alpha2026Older', 'Older', 2026, NULL, '2026-04-01');
+        INSERT INTO records(citekey, title, year, doi, added_at)
+          VALUES ('Zulu2026Newer', 'Newer', 2026, NULL, '2026-05-01');
+        INSERT INTO records(citekey, title, year, doi, added_at)
+          VALUES ('Beta2025Newest', 'Older year', 2025, NULL, '2026-06-01');
+        """)
+        let reader = LocalLibraryIndexReader(databaseURL: db)
+
+        let maybeResponse = try await reader.load()
+        let response = try XCTUnwrap(maybeResponse)
+
+        XCTAssertEqual(
+            response.entries.map(\.citekey),
+            ["Zulu2026Newer", "Alpha2026Older", "Beta2025Newest"]
+        )
+        XCTAssertEqual(response.entries[0].addedAt, "2026-05-01")
     }
 
     func testReadMissingIndexReturnsNil() async throws {

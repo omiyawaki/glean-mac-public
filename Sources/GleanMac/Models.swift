@@ -162,16 +162,25 @@ struct LibraryEntry: Codable, Identifiable, Hashable {
     let citekey: String
     let title: String
     let year: Int?
+    let addedAt: String?
     let doi: String?
     let authors: [LibraryAuthor]
 
     var id: String { citekey }
 
     // Public initializer used by LocalLibraryIndexReader (local SQLite path)
-    init(citekey: String, title: String, year: Int?, doi: String?, authors: [LibraryAuthor]) {
+    init(
+        citekey: String,
+        title: String,
+        year: Int?,
+        addedAt: String? = nil,
+        doi: String?,
+        authors: [LibraryAuthor]
+    ) {
         self.citekey = citekey
         self.title = LibraryEntry.cleanedTitle(title)
         self.year = year
+        self.addedAt = addedAt
         self.doi = doi
         self.authors = authors
     }
@@ -182,6 +191,7 @@ struct LibraryEntry: Codable, Identifiable, Hashable {
         let rawTitle = try container.decode(String.self, forKey: .title)
         title = LibraryEntry.cleanedTitle(rawTitle)
         year = try container.decodeIfPresent(Int.self, forKey: .year)
+        addedAt = try container.decodeIfPresent(String.self, forKey: .addedAt)
         doi = try container.decodeIfPresent(String.self, forKey: .doi)
         authors = try container.decode([LibraryAuthor].self, forKey: .authors)
     }
@@ -189,6 +199,7 @@ struct LibraryEntry: Codable, Identifiable, Hashable {
     // CodingKeys only needed because we have a custom init(from:)
     private enum CodingKeys: String, CodingKey {
         case citekey, title, year, doi, authors
+        case addedAt = "added_at"
     }
 }
 

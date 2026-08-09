@@ -48,7 +48,9 @@ enum LibraryFilter {
         .union(CharacterSet(charactersIn: ",;"))
     private static let termBoundaryCharacters = CharacterSet.alphanumerics.inverted
 
-    /// Group entries by year, descending. Undated entries trail.
+    /// Group entries by year, descending. Within each year, newest library
+    /// additions lead; citekey provides a stable fallback for ties and legacy
+    /// entries without an added date. Undated publication years trail.
     static func groupByYear(_ entries: [LibraryEntry]) -> [YearGroup] {
         var byYear: [Int?: [LibraryEntry]] = [:]
         byYear.reserveCapacity(120)
@@ -63,6 +65,18 @@ enum LibraryFilter {
             default: return false
             }
         }
-        .map { YearGroup(year: $0, entries: byYear[$0] ?? []) }
+        .map { year in
+            YearGroup(
+                year: year,
+                entries: (byYear[year] ?? []).sorted(by: newestAddedFirst)
+            )
+        }
+    }
+
+    private static func newestAddedFirst(_ lhs: LibraryEntry, _ rhs: LibraryEntry) -> Bool {
+        if lhs.addedAt != rhs.addedAt {
+            return (lhs.addedAt ?? "") > (rhs.addedAt ?? "")
+        }
+        return lhs.citekey < rhs.citekey
     }
 }

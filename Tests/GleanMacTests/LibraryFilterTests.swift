@@ -163,6 +163,37 @@ final class LibraryFilterTests: XCTestCase {
         XCTAssertEqual(groups[1].entries.count, 2)
     }
 
+    func testGroupByYearOrdersNewestAdditionsFirstWithinYear() {
+        let entries = [
+            makeEntry(citekey: "Alpha2026Older", title: "Older", year: 2026,
+                      addedAt: "2026-04-01"),
+            makeEntry(citekey: "Zulu2026Newer", title: "Newer", year: 2026,
+                      addedAt: "2026-05-01"),
+            makeEntry(citekey: "Beta2025Newest", title: "Older year", year: 2025,
+                      addedAt: "2026-06-01"),
+        ]
+
+        let groups = LibraryFilter.groupByYear(entries)
+
+        XCTAssertEqual(groups.map(\.year), [2026, 2025])
+        XCTAssertEqual(
+            groups[0].entries.map(\.citekey),
+            ["Zulu2026Newer", "Alpha2026Older"]
+        )
+    }
+
+    func testGroupByYearUsesCitekeyForTiedOrMissingAddedDates() {
+        let entries = [
+            makeEntry(citekey: "Zulu", title: "Z", addedAt: nil),
+            makeEntry(citekey: "Beta", title: "B", addedAt: "2026-05-01"),
+            makeEntry(citekey: "Alpha", title: "A", addedAt: "2026-05-01"),
+        ]
+
+        let groups = LibraryFilter.groupByYear(entries)
+
+        XCTAssertEqual(groups[0].entries.map(\.citekey), ["Alpha", "Beta", "Zulu"])
+    }
+
     // MARK: - performance regression
 
     /// Reproduces the path that beach-balled the UI: a 5000-record
@@ -202,9 +233,10 @@ final class LibraryFilterTests: XCTestCase {
     private func makeEntry(citekey: String,
                            title: String,
                            year: Int? = 2024,
+                           addedAt: String? = nil,
                            doi: String? = nil,
                            authors: [LibraryAuthor] = []) -> LibraryEntry {
-        LibraryEntry(citekey: citekey, title: title, year: year,
+        LibraryEntry(citekey: citekey, title: title, year: year, addedAt: addedAt,
                      doi: doi, authors: authors)
     }
 

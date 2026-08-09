@@ -22,11 +22,18 @@ struct LocalLibraryIndexReader {
         guard FileManager.default.fileExists(atPath: databaseURL.path) else {
             return nil
         }
+        let recordColumns = try runJSONQuery(
+            "PRAGMA table_info(records)"
+        ) as [ColumnRow]
+        let addedAtSelection = recordColumns.contains { $0.name == "added_at" }
+            ? "added_at"
+            : "NULL AS added_at"
         let records = try runJSONQuery(
             """
-            SELECT citekey, title, year, doi
+            SELECT citekey, title, year, doi, \(addedAtSelection)
             FROM records
-            ORDER BY year IS NULL, year DESC, citekey ASC
+            ORDER BY year IS NULL, year DESC,
+                     added_at IS NULL, added_at DESC, citekey ASC
             """
         ) as [RecordRow]
         let authors = try runJSONQuery(
@@ -48,6 +55,7 @@ struct LocalLibraryIndexReader {
                 citekey: row.citekey,
                 title: LibraryEntry.cleanedTitle(row.title),
                 year: row.year,
+                addedAt: row.addedAt,
                 doi: row.doi,
                 authors: authorsByCitekey[row.citekey] ?? []
             )
@@ -90,7 +98,17 @@ struct LocalLibraryIndexReader {
         let citekey: String
         let title: String
         let year: Int?
+        let addedAt: String?
         let doi: String?
+
+        private enum CodingKeys: String, CodingKey {
+            case citekey, title, year, doi
+            case addedAt = "added_at"
+        }
+    }
+
+    private struct ColumnRow: Decodable {
+        let name: String
     }
 
     private struct AuthorRow: Decodable {
