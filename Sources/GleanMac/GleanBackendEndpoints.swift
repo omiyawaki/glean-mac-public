@@ -32,6 +32,22 @@ struct GleanBackendEndpoints: Equatable, Sendable {
     }
 
     func libraryDetailURL(citekey: String) -> URL {
+        libraryPaperURL(citekey: citekey)
+    }
+
+    func libraryRelationURL(citekey: String, kind: LibraryRelationKind) -> URL {
+        libraryPaperURL(citekey: citekey, suffix: kind.apiPathComponent)
+    }
+
+    func libraryReferenceRetryURL(citekey: String) -> URL {
+        libraryPaperURL(citekey: citekey, suffix: "references/retry")
+    }
+
+    var graphStatusURL: URL {
+        libraryURL(path: "api/graph/status")
+    }
+
+    private func libraryPaperURL(citekey: String, suffix: String? = nil) -> URL {
         let papersURL = endpoint(base: libraryBase, path: "api/papers")
         guard var components = URLComponents(
             url: papersURL,
@@ -46,6 +62,9 @@ struct GleanBackendEndpoints: Equatable, Sendable {
             withAllowedCharacters: allowed
         ) ?? citekey
         components.percentEncodedPath += "/\(encoded)"
+        if let suffix {
+            components.percentEncodedPath += "/\(suffix)"
+        }
         return components.url ?? papersURL.appendingPathComponent(citekey)
     }
 

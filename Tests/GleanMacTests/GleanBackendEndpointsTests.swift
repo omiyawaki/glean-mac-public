@@ -25,6 +25,30 @@ final class GleanBackendEndpointsTests: XCTestCase {
             endpoints.libraryDetailURL(citekey: "Abatzoglou2026Observed").absoluteString,
             "http://backend.example.com:8766/api/papers/Abatzoglou2026Observed"
         )
+        XCTAssertEqual(
+            endpoints.libraryRelationURL(
+                citekey: "Abatzoglou2026Observed",
+                kind: .references
+            ).absoluteString,
+            "http://backend.example.com:8766/api/papers/Abatzoglou2026Observed/references"
+        )
+        XCTAssertEqual(
+            endpoints.libraryRelationURL(
+                citekey: "Abatzoglou2026Observed",
+                kind: .citedBy
+            ).absoluteString,
+            "http://backend.example.com:8766/api/papers/Abatzoglou2026Observed/cited-by"
+        )
+        XCTAssertEqual(
+            endpoints.libraryReferenceRetryURL(
+                citekey: "Abatzoglou2026Observed"
+            ).absoluteString,
+            "http://backend.example.com:8766/api/papers/Abatzoglou2026Observed/references/retry"
+        )
+        XCTAssertEqual(
+            endpoints.graphStatusURL.absoluteString,
+            "http://backend.example.com:8766/api/graph/status"
+        )
     }
 
     func testDetailCitekeyIsEncodedAsOnePathComponent() {
@@ -36,6 +60,11 @@ final class GleanBackendEndpointsTests: XCTestCase {
         XCTAssertEqual(
             endpoints.libraryDetailURL(citekey: "A B/C").absoluteString,
             "http://127.0.0.1:8766/api/papers/A%20B%2FC"
+        )
+        XCTAssertEqual(
+            endpoints.libraryRelationURL(citekey: "A B/C", kind: .references)
+                .absoluteString,
+            "http://127.0.0.1:8766/api/papers/A%20B%2FC/references"
         )
     }
 }
