@@ -4,6 +4,12 @@ import os
 
 private let log = Logger(subsystem: "com.miyawaki.glean-mac", category: "search")
 
+enum ExpandingSearchPresentation {
+    static func shouldExpand(for query: String) -> Bool {
+        !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+}
+
 /// Toolbar-placed search affordance that mirrors the System Settings
 /// pattern: a circular magnifying-glass button by default, expands
 /// inline into a search field when focused, collapses back when blurred
@@ -31,6 +37,11 @@ struct ExpandingSearch: View {
             }
         }
         .animation(.smooth(duration: 0.22), value: isExpanded)
+        .onChange(of: query, initial: true) { _, query in
+            if ExpandingSearchPresentation.shouldExpand(for: query) {
+                isExpanded = true
+            }
+        }
     }
 
     private var collapsed: some View {
