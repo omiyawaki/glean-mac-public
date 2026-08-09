@@ -30,6 +30,10 @@ where Entry.ID: Hashable {
     var hasLoadedOnce: Bool = false
     var lastRefreshedAt: Date? = nil
 
+    var isShowingStaleData: Bool {
+        hasLoadedOnce && lastError != nil
+    }
+
     private let endpoint: URL
     private let extract: (Response) -> (Int, [Entry])
     private let timeoutInterval: TimeInterval
@@ -264,55 +268,50 @@ where Entry.ID: Hashable {
 
 @MainActor
 enum Stores {
-    private static let intakeBase = URL(string: "http://backend.example.com:8765")!
-    private static let libraryBase = URL(string: "http://backend.example.com:8766")!
-
-    private static func intakeEndpoint(
-        _ path: String,
-        queryItems: [URLQueryItem] = []
-    ) -> URL {
-        let url = intakeBase.appendingPathComponent(path)
-        guard !queryItems.isEmpty,
-              var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
-            return url
-        }
-        components.queryItems = queryItems
-        return components.url ?? url
-    }
-
-    static func backlog() -> IntakeStore<BacklogEntry, BacklogResponse> {
+    static func backlog(
+        endpoints: GleanBackendEndpoints = .home,
+        snapshotCache: BacklogSnapshotCache = .default
+    ) -> IntakeStore<BacklogEntry, BacklogResponse> {
         IntakeStore(
-            endpoint: intakeEndpoint(
-                "api/backlog",
-                queryItems: [URLQueryItem(name: "scope", value: "global")]
-            ),
+            endpoint: endpoints.backlogURL,
             timeoutInterval: 15,
+            minSpinnerDuration: .milliseconds(0),
+            loadCachedResponse: { try await snapshotCache.load() },
+            saveResponse: { try await snapshotCache.save($0) },
             automaticRetryDelay: .seconds(5),
-            maxAutomaticRetryAttempts: 3,
+            // A cold backend can spend ~20 seconds building its first
+            // global snapshot. Keep retrying silently after the initial
+            // cached/empty state so publication cannot be missed.
+            maxAutomaticRetryAttempts: 12,
             extract: { ($0.count, $0.entries) }
         )
     }
 
-    static func review() -> IntakeStore<ReviewEntry, ReviewResponse> {
+    static func review(
+        endpoints: GleanBackendEndpoints = .home
+    ) -> IntakeStore<ReviewEntry, ReviewResponse> {
         IntakeStore(
-            endpoint: intakeBase.appendingPathComponent("/api/review-queue"),
+            endpoint: endpoints.intakeURL(path: "api/review-queue"),
             extract: { ($0.count, $0.entries) }
         )
     }
 
-    static func author() -> IntakeStore<AuthorProposal, AuthorProposalsResponse> {
+    static func author(
+        endpoints: GleanBackendEndpoints = .home
+    ) -> IntakeStore<AuthorProposal, AuthorProposalsResponse> {
         IntakeStore(
-            endpoint: intakeBase.appendingPathComponent("/api/author-proposals"),
+            endpoint: endpoints.intakeURL(path: "api/author-proposals"),
             extract: { ($0.count, $0.entries) }
         )
     }
 
     static func library(
+        endpoints: GleanBackendEndpoints = .home,
         snapshotCache: LibrarySnapshotCache = .default,
         localIndexReader: LocalLibraryIndexReader? = .default
     ) -> IntakeStore<LibraryEntry, LibraryResponse> {
         IntakeStore(
-            endpoint: libraryBase.appendingPathComponent("/api/papers"),
+            endpoint: endpoints.libraryURL(path: "api/papers"),
             timeoutInterval: 15,
             minSpinnerDuration: .milliseconds(0),
             loadCachedResponse: {

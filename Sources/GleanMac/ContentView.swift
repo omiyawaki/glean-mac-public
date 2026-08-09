@@ -52,9 +52,7 @@ struct ContentView: View {
     @State private var eventStream: EventStream?
     @State private var addPaperController = AddPaperController()
 
-    private static let eventsURL = URL(
-        string: "http://backend.example.com:8765/events"
-    )!
+    private static let eventsURL = GleanBackendEndpoints.home.eventsURL
     private let backlogPDFManualFetcher = BacklogPDFManualFetcher()
     private let ticker = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
 
@@ -176,6 +174,7 @@ struct ContentView: View {
         let review = reviewStore
         let author = authorStore
         let library = libraryStore
+        let libraryDetail = libraryDetailStore
         let actions = actionQueue
 
         r.registerState(key: "sidebarSelection") {
@@ -193,11 +192,21 @@ struct ContentView: View {
         r.registerState(key: "backlog.count") { backlog.count }
         r.registerState(key: "backlog.entries") { backlog.entries.count }
         r.registerState(key: "backlog.isLoading") { backlog.isLoading }
+        r.registerState(key: "backlog.hasLoadedOnce") { backlog.hasLoadedOnce }
+        r.registerState(key: "backlog.lastError") { backlog.lastError ?? "" }
         r.registerState(key: "review.count") { review.count }
         r.registerState(key: "author.count") { author.count }
         r.registerState(key: "library.count") { library.count }
         r.registerState(key: "library.entries") { library.entries.count }
         r.registerState(key: "library.isLoading") { library.isLoading }
+        r.registerState(key: "libraryDetail.loadedCitekey") {
+            libraryDetail.loadedCitekey ?? ""
+        }
+        r.registerState(key: "libraryDetail.isLoading") { libraryDetail.isLoading }
+        r.registerState(key: "libraryDetail.error") { libraryDetail.error ?? "" }
+        r.registerState(key: "libraryDetail.hasRecord") {
+            libraryDetail.record != nil
+        }
         r.registerState(key: "actions.active") { actions.activeCount }
         r.registerState(key: "actions.failed") { actions.failedCount }
 
@@ -229,6 +238,12 @@ struct ContentView: View {
             if let q = payload?["query"] as? String {
                 libraryQueryBinding.wrappedValue = q
             }
+        }
+        r.registerAction(id: "library.selectByCitekey") { @MainActor (payload: [String: Any]?) in
+            guard let citekey = payload?["citekey"] as? String,
+                  !citekey.isEmpty else { return }
+            selectionBinding.wrappedValue = .libraryAll
+            librarySelectionBinding.wrappedValue = citekey
         }
         r.registerAction(id: "backlog.selectByID") { @MainActor (payload: [String: Any]?) in
             if let id = payload?["id"] as? String {

@@ -9,20 +9,24 @@ final class LibraryDetailStore {
     var error: String?
     var loadedCitekey: String?
 
-    private let baseURL = URL(string: "http://backend.example.com:8766")!
+    private let endpoints: GleanBackendEndpoints
+
+    init(endpoints: GleanBackendEndpoints = .home) {
+        self.endpoints = endpoints
+    }
 
     func load(citekey: String?) async {
         guard let citekey else {
             record = nil
             loadedCitekey = nil
+            error = nil
             return
         }
         if loadedCitekey == citekey, record != nil { return }
+        error = nil
         isLoading = true
         defer { isLoading = false }
-        let path = "/api/papers/" + (citekey.addingPercentEncoding(
-            withAllowedCharacters: .urlPathAllowed) ?? citekey)
-        let url = baseURL.appendingPathComponent(path)
+        let url = endpoints.libraryDetailURL(citekey: citekey)
         do {
             var request = URLRequest(url: url)
             request.timeoutInterval = 10

@@ -14,7 +14,7 @@ import Foundation
 /// then cleans up the optimistic guard). The event path still keeps
 /// other clients and background tabs in sync.
 enum IntakeActions {
-    private static let baseURL = URL(string: "http://backend.example.com:8765")!
+    private static let endpoints = GleanBackendEndpoints.home
     private static let defaultPostTimeout: TimeInterval = 30
     private static let reviewAddTimeout: TimeInterval = 660
 
@@ -155,7 +155,7 @@ enum IntakeActions {
         )
         defer { try? FileManager.default.removeItem(at: bodyFile) }
 
-        var request = URLRequest(url: baseURL.appendingPathComponent("/attach"))
+        var request = URLRequest(url: endpoints.intakeURL(path: "attach"))
         request.httpMethod = "POST"
         request.setValue("multipart/form-data; boundary=\(boundary)",
                          forHTTPHeaderField: "Content-Type")
@@ -242,7 +242,7 @@ enum IntakeActions {
                              timeoutInterval: TimeInterval = defaultPostTimeout,
                              operationID: UUID? = nil,
                              requiresReviewTerminal: Bool = false) async throws {
-        var request = URLRequest(url: baseURL.appendingPathComponent(path))
+        var request = URLRequest(url: endpoints.intakeURL(path: path))
         request.httpMethod = "POST"
         request.setValue("application/x-www-form-urlencoded",
                          forHTTPHeaderField: "Content-Type")

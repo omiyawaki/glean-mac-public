@@ -81,7 +81,12 @@ final class IntakeStoreTests: XCTestCase {
             return Self.ok(request: request, body: body)
         }
 
-        let store = Stores.backlog()
+        let cache = BacklogSnapshotCache(
+            url: FileManager.default.temporaryDirectory
+                .appendingPathComponent(UUID().uuidString)
+                .appendingPathComponent("backlog.json")
+        )
+        let store = Stores.backlog(snapshotCache: cache)
         await store.load()
 
         let components = try? XCTUnwrap(URLComponents(
@@ -156,6 +161,7 @@ final class IntakeStoreTests: XCTestCase {
         XCTAssertEqual(store.count, 1)
         XCTAssertEqual(store.entries.map(\.citekey), ["Cached2026Paper"])
         XCTAssertEqual(store.lastError, "HTTP 503")
+        XCTAssertTrue(store.isShowingStaleData)
         XCTAssertFalse(store.isLoading)
     }
 

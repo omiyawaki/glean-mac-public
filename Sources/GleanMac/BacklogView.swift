@@ -24,19 +24,33 @@ struct BacklogView: View {
                     ProgressView().controlSize(.large)
                 }
             } else {
-                List(selection: $selection) {
-                    Section {
-                        ForEach(store.entries) { entry in
-                            BacklogRow(entry: entry,
-                                       onDropPDFs: { urls in
-                                           enqueueForceAttach(urls: urls,
-                                                              citekey: entry.citekey)
-                                       },
-                                       onTryFetchingPDF: {
-                                           let isAlreadySelected = selection == entry.id
-                                           Task { await retryPDF(entry, isAlreadySelected) }
-                                       })
-                                .tag(entry.id)
+                VStack(spacing: 0) {
+                    if let message = store.lastError {
+                        Label(
+                            "Showing saved backlog. Refresh failed: \(message)",
+                            systemImage: "exclamationmark.triangle"
+                        )
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(.bar)
+                    }
+                    List(selection: $selection) {
+                        Section {
+                            ForEach(store.entries) { entry in
+                                BacklogRow(entry: entry,
+                                           onDropPDFs: { urls in
+                                               enqueueForceAttach(urls: urls,
+                                                                  citekey: entry.citekey)
+                                           },
+                                           onTryFetchingPDF: {
+                                               let isAlreadySelected = selection == entry.id
+                                               Task { await retryPDF(entry, isAlreadySelected) }
+                                           })
+                                    .tag(entry.id)
+                            }
                         }
                     }
                 }
