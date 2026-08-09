@@ -22,9 +22,15 @@ enum LibraryChronology {
         for group in groups {
             var seenMonths: Set<String> = []
             var yearMarkers: [Marker] = []
+            var firstPendingEntry: LibraryEntry?
 
             for entry in group.entries {
-                guard let parts = exactMonth(from: entry.publishedAt) else { continue }
+                guard let parts = exactMonth(from: entry.publishedAt) else {
+                    if firstPendingEntry == nil {
+                        firstPendingEntry = entry
+                    }
+                    continue
+                }
                 let key = String(format: "%04d-%02d", parts.year, parts.month)
                 guard seenMonths.insert(key).inserted else { continue }
                 yearMarkers.append(Marker(
@@ -40,6 +46,12 @@ enum LibraryChronology {
                     id: entry.citekey,
                     label: label,
                     majorLabel: label
+                ))
+            } else if let firstPendingEntry, let year = group.year {
+                yearMarkers.append(Marker(
+                    id: firstPendingEntry.citekey,
+                    label: "\(year) (date pending)",
+                    majorLabel: nil
                 ))
             }
             result.append(contentsOf: yearMarkers)
