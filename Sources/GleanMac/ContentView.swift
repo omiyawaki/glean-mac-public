@@ -36,6 +36,7 @@ struct ContentView: View {
     @State private var librarySelection: String?
     @State private var libraryQuery = ""
     @State private var libraryRelationRequest: LibraryRelationRequest?
+    @State private var pendingLibraryRevealCitekey: String?
     @State private var inspectorPresented = false
     @State private var didApplyLaunchSelection = false
     @State private var mountedSidebarItems = MountedSidebarItems(initial: .backlog)
@@ -69,13 +70,12 @@ struct ContentView: View {
             inspector
                 .inspectorColumnWidth(min: 280, ideal: 340, max: 480)
         }
-        .sheet(item: $libraryRelationRequest) { request in
+        .sheet(item: $libraryRelationRequest, onDismiss: revealPendingLibraryPaper) { request in
             LibraryRelationsView(
                 request: request,
                 libraryEntries: libraryStore.entries,
                 onOpenLibraryPaper: { citekey in
-                    selection = .libraryAll
-                    librarySelection = citekey
+                    pendingLibraryRevealCitekey = citekey
                 }
             )
         }
@@ -170,6 +170,18 @@ struct ContentView: View {
         )
     }
 
+    private func revealLibraryPaper(_ citekey: String) {
+        selection = .libraryAll
+        syncedLibraryQueryBinding.wrappedValue = citekey
+        librarySelection = citekey
+    }
+
+    private func revealPendingLibraryPaper() {
+        guard let citekey = pendingLibraryRevealCitekey else { return }
+        pendingLibraryRevealCitekey = nil
+        revealLibraryPaper(citekey)
+    }
+
     private func registerIntrospection() {
         let r = IntrospectionRegistry.shared
 
@@ -254,6 +266,7 @@ struct ContentView: View {
             guard let citekey = payload?["citekey"] as? String,
                   !citekey.isEmpty else { return }
             selectionBinding.wrappedValue = .libraryAll
+            libraryQueryBinding.wrappedValue = citekey
             librarySelectionBinding.wrappedValue = citekey
         }
         r.registerAction(id: "backlog.selectByID") { @MainActor (payload: [String: Any]?) in
