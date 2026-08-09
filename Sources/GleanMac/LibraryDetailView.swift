@@ -9,10 +9,10 @@ final class LibraryDetailStore {
     var error: String?
     var loadedCitekey: String?
 
-    private let endpoints: GleanBackendEndpoints
+    private let recordLoader: LibraryRecordLoader
 
     init(endpoints: GleanBackendEndpoints = .home) {
-        self.endpoints = endpoints
+        recordLoader = LibraryRecordLoader(endpoints: endpoints)
     }
 
     func load(citekey: String?) async {
@@ -26,16 +26,8 @@ final class LibraryDetailStore {
         error = nil
         isLoading = true
         defer { isLoading = false }
-        let url = endpoints.libraryDetailURL(citekey: citekey)
         do {
-            var request = URLRequest(url: url)
-            request.timeoutInterval = 10
-            let (data, response) = try await URLSession.shared.data(for: request)
-            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
-                error = "HTTP \((response as? HTTPURLResponse)?.statusCode ?? -1)"
-                return
-            }
-            let decoded = try JSONDecoder().decode(LibraryRecord.self, from: data)
+            let decoded = try await recordLoader.load(citekey: citekey)
             withAnimation(.smooth) {
                 record = decoded
                 loadedCitekey = citekey

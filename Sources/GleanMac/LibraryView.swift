@@ -10,6 +10,7 @@ struct LibraryView: View {
     let actionQueue: ActionQueueStore
     let offlineCoordinator: OfflineIntakeCoordinator
     let syncPendingOperations: () async -> Void
+    let loadedRecord: LibraryRecord?
     @Binding var selection: String?
     @Binding var query: String
 
@@ -58,6 +59,7 @@ struct LibraryView: View {
                 Section(group.year.map { String($0) } ?? "Undated") {
                     ForEach(group.entries) { entry in
                         LibraryRow(entry: entry,
+                                   loadedRecord: loadedRecord,
                                    onDropPDFs: { urls in
                                        enqueueForceAttach(urls: urls,
                                                           citekey: entry.citekey)
@@ -89,6 +91,7 @@ struct LibraryView: View {
 
 private struct LibraryRow: View {
     let entry: LibraryEntry
+    let loadedRecord: LibraryRecord?
     let onDropPDFs: ([URL]) -> Bool
     @State private var isDropTargeted = false
 
@@ -119,6 +122,36 @@ private struct LibraryRow: View {
         )
         .contentShape(Rectangle())
         .help(entry.title)
+        .contextMenu {
+            Button {
+                LibraryCopyAction().copyDOI(from: entry)
+            } label: {
+                Label(LibraryCopyAction.copyDOIMenuTitle, systemImage: "doc.on.doc")
+            }
+            .disabled(!LibraryCopyAction.canCopyDOI(from: entry))
+
+            Button {
+                LibraryCopyAction().copyCiteID(from: entry)
+            } label: {
+                Label(LibraryCopyAction.copyCiteIDMenuTitle, systemImage: "number")
+            }
+
+            Menu {
+                ForEach(LibraryCitationStyle.allCases) { style in
+                    Button(style.menuTitle) {
+                        Task {
+                            await LibraryCopyAction().copyCitation(
+                                from: entry,
+                                loadedRecord: loadedRecord,
+                                style: style
+                            )
+                        }
+                    }
+                }
+            } label: {
+                Label(LibraryCopyAction.copyCitationMenuTitle, systemImage: "text.quote")
+            }
+        }
         .dropDestination(for: URL.self) { urls, _ in
             onDropPDFs(urls)
         } isTargeted: { isDropTargeted = $0 }

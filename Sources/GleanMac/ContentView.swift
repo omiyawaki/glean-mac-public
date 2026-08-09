@@ -290,6 +290,7 @@ struct ContentView: View {
                             actionQueue: actionQueue,
                             offlineCoordinator: offlineCoordinator,
                             syncPendingOperations: syncPendingOperations,
+                            loadedRecord: libraryDetailStore.record,
                             selection: $librarySelection,
                             query: syncedLibraryQueryBinding)
                     .sidebarPane(.libraryAll, selection: selection)
