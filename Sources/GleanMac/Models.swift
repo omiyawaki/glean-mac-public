@@ -162,6 +162,7 @@ struct LibraryEntry: Codable, Identifiable, Hashable {
     let citekey: String
     let title: String
     let year: Int?
+    let publishedAt: String?
     let addedAt: String?
     let doi: String?
     let authors: [LibraryAuthor]
@@ -173,6 +174,7 @@ struct LibraryEntry: Codable, Identifiable, Hashable {
         citekey: String,
         title: String,
         year: Int?,
+        publishedAt: String? = nil,
         addedAt: String? = nil,
         doi: String?,
         authors: [LibraryAuthor]
@@ -180,6 +182,7 @@ struct LibraryEntry: Codable, Identifiable, Hashable {
         self.citekey = citekey
         self.title = LibraryEntry.cleanedTitle(title)
         self.year = year
+        self.publishedAt = publishedAt
         self.addedAt = addedAt
         self.doi = doi
         self.authors = authors
@@ -191,6 +194,7 @@ struct LibraryEntry: Codable, Identifiable, Hashable {
         let rawTitle = try container.decode(String.self, forKey: .title)
         title = LibraryEntry.cleanedTitle(rawTitle)
         year = try container.decodeIfPresent(Int.self, forKey: .year)
+        publishedAt = try container.decodeIfPresent(String.self, forKey: .publishedAt)
         addedAt = try container.decodeIfPresent(String.self, forKey: .addedAt)
         doi = try container.decodeIfPresent(String.self, forKey: .doi)
         authors = try container.decode([LibraryAuthor].self, forKey: .authors)
@@ -199,6 +203,7 @@ struct LibraryEntry: Codable, Identifiable, Hashable {
     // CodingKeys only needed because we have a custom init(from:)
     private enum CodingKeys: String, CodingKey {
         case citekey, title, year, doi, authors
+        case publishedAt = "published_at"
         case addedAt = "added_at"
     }
 }
@@ -220,6 +225,7 @@ struct LibraryRecord: Codable, Hashable, Identifiable {
     let type: String?
     let title: String
     let year: Int?
+    let publishedAt: String?
     let doi: String?
     let arxiv: String?
     let isbn: String?
@@ -249,6 +255,7 @@ struct LibraryRecord: Codable, Hashable, Identifiable {
         type: String?,
         title: String,
         year: Int?,
+        publishedAt: String? = nil,
         doi: String?,
         arxiv: String?,
         isbn: String?,
@@ -273,6 +280,7 @@ struct LibraryRecord: Codable, Hashable, Identifiable {
         self.type = type
         self.title = LibraryRecord.cleanedTitle(title)
         self.year = year
+        self.publishedAt = publishedAt
         self.doi = doi
         self.arxiv = arxiv
         self.isbn = isbn
@@ -301,6 +309,7 @@ struct LibraryRecord: Codable, Hashable, Identifiable {
         let rawTitle = try container.decode(String.self, forKey: .title)
         title = LibraryRecord.cleanedTitle(rawTitle)
         year = try container.decodeIfPresent(Int.self, forKey: .year)
+        publishedAt = try container.decodeIfPresent(String.self, forKey: .publishedAt)
         doi = try container.decodeIfPresent(String.self, forKey: .doi)
         arxiv = try container.decodeIfPresent(String.self, forKey: .arxiv)
         isbn = try container.decodeIfPresent(String.self, forKey: .isbn)
@@ -324,6 +333,7 @@ struct LibraryRecord: Codable, Hashable, Identifiable {
 
     enum CodingKeys: String, CodingKey {
         case citekey, type, title, year, doi, arxiv, isbn, pmid, pmcid
+        case publishedAt = "published_at"
         case journal, volume, issue, pages, publisher, url, abstract
         case keywords, authors, attachments, read, notes
         case addedAt = "added_at"

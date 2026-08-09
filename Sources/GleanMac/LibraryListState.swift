@@ -15,6 +15,17 @@ final class LibraryListState {
     struct Result: Equatable {
         let visibleCount: Int
         let grouped: [LibraryFilter.YearGroup]
+        let chronology: [LibraryChronology.Marker]
+
+        init(
+            visibleCount: Int,
+            grouped: [LibraryFilter.YearGroup],
+            chronology: [LibraryChronology.Marker]? = nil
+        ) {
+            self.visibleCount = visibleCount
+            self.grouped = grouped
+            self.chronology = chronology ?? LibraryChronology.markers(for: grouped)
+        }
     }
 
     enum Mode {
@@ -26,6 +37,8 @@ final class LibraryListState {
 
     var allGrouped: [LibraryFilter.YearGroup] = []
     var filteredGrouped: [LibraryFilter.YearGroup] = []
+    var allChronology: [LibraryChronology.Marker] = []
+    var filteredChronology: [LibraryChronology.Marker] = []
     var visibleCount: Int = 0
     var mode: Mode = .all
 
@@ -54,6 +67,7 @@ final class LibraryListState {
         if entries != lastEntries {
             let result = recompute(entries, "")
             allGrouped = result.grouped
+            allChronology = result.chronology
             allVisibleCount = result.visibleCount
         }
 
@@ -63,6 +77,7 @@ final class LibraryListState {
         } else {
             let result = recompute(entries, query)
             filteredGrouped = result.grouped
+            filteredChronology = result.chronology
             filteredVisibleCount = result.visibleCount
             mode = .filtered
             visibleCount = filteredVisibleCount

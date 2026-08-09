@@ -163,14 +163,14 @@ final class LibraryFilterTests: XCTestCase {
         XCTAssertEqual(groups[1].entries.count, 2)
     }
 
-    func testGroupByYearOrdersNewestAdditionsFirstWithinYear() {
+    func testGroupByYearOrdersNewestPublicationsFirstWithinYear() {
         let entries = [
             makeEntry(citekey: "Alpha2026Older", title: "Older", year: 2026,
-                      addedAt: "2026-04-01"),
+                      publishedAt: "2026-04-01", addedAt: "2026-06-01"),
             makeEntry(citekey: "Zulu2026Newer", title: "Newer", year: 2026,
-                      addedAt: "2026-05-01"),
+                      publishedAt: "2026-05-01", addedAt: "2026-03-01"),
             makeEntry(citekey: "Beta2025Newest", title: "Older year", year: 2025,
-                      addedAt: "2026-06-01"),
+                      publishedAt: "2025-12-01", addedAt: "2026-07-01"),
         ]
 
         let groups = LibraryFilter.groupByYear(entries)
@@ -179,6 +179,25 @@ final class LibraryFilterTests: XCTestCase {
         XCTAssertEqual(
             groups[0].entries.map(\.citekey),
             ["Zulu2026Newer", "Alpha2026Older"]
+        )
+    }
+
+    func testGroupByYearUsesExactPublicationYearAndFallsBackToAddedDate() {
+        let entries = [
+            makeEntry(citekey: "Online2026", title: "Online", year: 2025,
+                      publishedAt: "2026-01-02"),
+            makeEntry(citekey: "LegacyOlder", title: "Old", year: 2025,
+                      addedAt: "2026-04-01"),
+            makeEntry(citekey: "LegacyNewer", title: "New", year: 2025,
+                      addedAt: "2026-05-01"),
+        ]
+
+        let groups = LibraryFilter.groupByYear(entries)
+
+        XCTAssertEqual(groups.map(\.year), [2026, 2025])
+        XCTAssertEqual(
+            groups[1].entries.map(\.citekey),
+            ["LegacyNewer", "LegacyOlder"]
         )
     }
 
@@ -206,10 +225,12 @@ final class LibraryFilterTests: XCTestCase {
         let start = Date()
         let filtered = LibraryFilter.filter(entries, query: "")
         let groups = LibraryFilter.groupByYear(filtered)
+        let chronology = LibraryChronology.markers(for: groups)
         let elapsed = Date().timeIntervalSince(start)
 
         XCTAssertEqual(filtered.count, 5000)
         XCTAssertGreaterThan(groups.count, 0)
+        XCTAssertGreaterThan(chronology.count, 0)
         XCTAssertLessThan(elapsed, 0.1,
                           "filter+group on 5000 records took \(elapsed)s — should be well under 100ms; if this fails the search-clear UI will beach-ball")
     }
@@ -233,10 +254,12 @@ final class LibraryFilterTests: XCTestCase {
     private func makeEntry(citekey: String,
                            title: String,
                            year: Int? = 2024,
+                           publishedAt: String? = nil,
                            addedAt: String? = nil,
                            doi: String? = nil,
                            authors: [LibraryAuthor] = []) -> LibraryEntry {
-        LibraryEntry(citekey: citekey, title: title, year: year, addedAt: addedAt,
+        LibraryEntry(citekey: citekey, title: title, year: year,
+                     publishedAt: publishedAt, addedAt: addedAt,
                      doi: doi, authors: authors)
     }
 

@@ -13,6 +13,7 @@ final class LibrarySnapshotCacheTests: XCTestCase {
                 citekey: "Abdi2026Hrrrcast",
                 title: "HRRRCast",
                 year: 2026,
+                publishedAt: "2026-05-03",
                 doi: "10.1175/test",
                 authors: [LibraryAuthor(family: "Abdi", given: "Daniel")]
             )
@@ -23,6 +24,7 @@ final class LibrarySnapshotCacheTests: XCTestCase {
 
         XCTAssertEqual(loaded?.count, 1)
         XCTAssertEqual(loaded?.entries.first?.citekey, "Abdi2026Hrrrcast")
+        XCTAssertEqual(loaded?.entries.first?.publishedAt, "2026-05-03")
         XCTAssertEqual(loaded?.entries.first?.authors.first?.family, "Abdi")
     }
 

@@ -1,3 +1,4 @@
+import AppleAppDesignSystem
 import SwiftUI
 
 enum LibraryRowLayout {
@@ -35,11 +36,13 @@ struct LibraryView: View {
                 ZStack {
                     libraryList(
                         groups: listState.allGrouped,
+                        chronology: listState.allChronology,
                         identity: "library-all",
                         isHidden: isFiltering
                     )
                     libraryList(
                         groups: listState.filteredGrouped,
+                        chronology: listState.filteredChronology,
                         identity: "library-filtered",
                         isHidden: !isFiltering
                     )
@@ -52,28 +55,54 @@ struct LibraryView: View {
     @ViewBuilder
     private func libraryList(
         groups: [LibraryFilter.YearGroup],
+        chronology: [LibraryChronology.Marker],
         identity: String,
         isHidden: Bool
     ) -> some View {
-        List(selection: $selection) {
-            ForEach(groups, id: \.year) { group in
-                Section(group.year.map { String($0) } ?? "Undated") {
-                    ForEach(group.entries) { entry in
-                        LibraryRow(entry: entry,
-                                   loadedRecord: loadedRecord,
-                                   showRelations: showRelations,
-                                   onDropPDFs: { urls in
-                                       enqueueForceAttach(urls: urls,
-                                                          citekey: entry.citekey)
-                                   })
-                            .tag(entry.id)
+        ScrollViewReader { proxy in
+            List(selection: $selection) {
+                ForEach(groups, id: \.year) { group in
+                    Section(group.year.map { String($0) } ?? "Undated") {
+                        ForEach(group.entries) { entry in
+                            LibraryRow(entry: entry,
+                                       loadedRecord: loadedRecord,
+                                       showRelations: showRelations,
+                                       onDropPDFs: { urls in
+                                           enqueueForceAttach(urls: urls,
+                                                              citekey: entry.citekey)
+                                       })
+                                .id(entry.citekey)
+                                .tag(entry.id)
+                        }
                     }
                 }
             }
+            .overlay(alignment: .trailing) {
+                if chronology.count > 1 {
+                    IndexedScrollRail(
+                        markers: chronology.map {
+                            IndexedScrollRailMarker(
+                                id: $0.id,
+                                label: $0.label,
+                                majorLabel: $0.majorLabel
+                            )
+                        },
+                        onSelect: { marker in
+                            proxy.scrollTo(marker.id, anchor: .top)
+                        }
+                    )
+                    .padding(.vertical, 10)
+                    .padding(.trailing, 8)
+                }
+            }
+            .onChange(of: selection) { _, citekey in
+                guard let citekey else { return }
+                proxy.scrollTo(citekey, anchor: .center)
+            }
+            .animation(nil, value: groups)
+            .id(identity)
+            .environment(\.defaultMinListRowHeight, LibraryRowLayout.rowHeight)
         }
-        .animation(nil, value: groups)
-        .id(identity)
-        .environment(\.defaultMinListRowHeight, LibraryRowLayout.rowHeight)
         .opacity(isHidden ? 0 : 1)
         .allowsHitTesting(!isHidden)
         .accessibilityHidden(isHidden)

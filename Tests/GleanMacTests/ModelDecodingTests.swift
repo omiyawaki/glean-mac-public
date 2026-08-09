@@ -121,6 +121,7 @@ final class ModelDecodingTests: XCTestCase {
               "citekey": "Abc2024Test",
               "title": "Some paper",
               "year": 2024,
+              "published_at": "2024-03-15",
               "added_at": "2026-05-01",
               "doi": "10.1000/x",
               "authors": [{"family": "Doe", "given": "Jane"}]
@@ -138,7 +139,9 @@ final class ModelDecodingTests: XCTestCase {
         let payload = try decode(LibraryResponse.self, from: json)
         XCTAssertEqual(payload.entries.count, 2)
         XCTAssertEqual(payload.entries[0].year, 2024)
+        XCTAssertEqual(payload.entries[0].publishedAt, "2024-03-15")
         XCTAssertEqual(payload.entries[0].addedAt, "2026-05-01")
+        XCTAssertNil(payload.entries[1].publishedAt)
         XCTAssertNil(payload.entries[1].addedAt)
         XCTAssertNil(payload.entries[1].year)
         XCTAssertNil(payload.entries[1].doi)
@@ -153,6 +156,7 @@ final class ModelDecodingTests: XCTestCase {
           "type": "journal-article",
           "title": "HRRRCast",
           "year": 2026,
+          "published_at": "2026-05-03",
           "doi": "10.1175/aies-d-25-0061.1",
           "arxiv": null,
           "isbn": null,
@@ -177,6 +181,7 @@ final class ModelDecodingTests: XCTestCase {
         let record = try decode(LibraryRecord.self, from: json)
         XCTAssertEqual(record.citekey, "Abdi2026Hrrrcast")
         XCTAssertEqual(record.year, 2026)
+        XCTAssertEqual(record.publishedAt, "2026-05-03")
         XCTAssertEqual(record.journal, "Artificial Intelligence for the Earth Systems")
         XCTAssertEqual(record.attachments.first?.path, "attachments/Abdi et al (2026).pdf")
         XCTAssertEqual(record.attachments.first?.kind, "main")
@@ -216,6 +221,7 @@ final class ModelDecodingTests: XCTestCase {
         """
         let record = try XCTUnwrap(try? decode(LibraryRecord.self, from: json))
         XCTAssertEqual(record.citekey, "Min1990Bare")
+        XCTAssertNil(record.publishedAt)
         XCTAssertEqual(record.attachments.count, 0)
         XCTAssertEqual(record.authors.count, 0)
         XCTAssertEqual(record.keywords.count, 0)

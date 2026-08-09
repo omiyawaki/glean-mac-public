@@ -36,6 +36,9 @@ struct LibraryMetadataInspector: View {
                     if let year = record.year {
                         LabeledContent("Year", value: String(year))
                     }
+                    if let publishedAt = nonEmpty(record.publishedAt) {
+                        LabeledContent("Published", value: publishedAt)
+                    }
                     if let v = nonEmpty(record.volume) {
                         LabeledContent("Volume", value: v)
                     }

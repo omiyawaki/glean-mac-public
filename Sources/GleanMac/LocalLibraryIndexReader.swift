@@ -28,11 +28,16 @@ struct LocalLibraryIndexReader {
         let addedAtSelection = recordColumns.contains { $0.name == "added_at" }
             ? "added_at"
             : "NULL AS added_at"
+        let publishedAtSelection = recordColumns.contains { $0.name == "published_at" }
+            ? "published_at"
+            : "NULL AS published_at"
         let records = try runJSONQuery(
             """
-            SELECT citekey, title, year, doi, \(addedAtSelection)
+            SELECT citekey, title, year, doi,
+                   \(publishedAtSelection), \(addedAtSelection)
             FROM records
             ORDER BY year IS NULL, year DESC,
+                     published_at IS NULL, published_at DESC,
                      added_at IS NULL, added_at DESC, citekey ASC
             """
         ) as [RecordRow]
@@ -55,6 +60,7 @@ struct LocalLibraryIndexReader {
                 citekey: row.citekey,
                 title: LibraryEntry.cleanedTitle(row.title),
                 year: row.year,
+                publishedAt: row.publishedAt,
                 addedAt: row.addedAt,
                 doi: row.doi,
                 authors: authorsByCitekey[row.citekey] ?? []
@@ -98,11 +104,13 @@ struct LocalLibraryIndexReader {
         let citekey: String
         let title: String
         let year: Int?
+        let publishedAt: String?
         let addedAt: String?
         let doi: String?
 
         private enum CodingKeys: String, CodingKey {
             case citekey, title, year, doi
+            case publishedAt = "published_at"
             case addedAt = "added_at"
         }
     }

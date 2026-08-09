@@ -48,14 +48,15 @@ enum LibraryFilter {
         .union(CharacterSet(charactersIn: ",;"))
     private static let termBoundaryCharacters = CharacterSet.alphanumerics.inverted
 
-    /// Group entries by year, descending. Within each year, newest library
-    /// additions lead; citekey provides a stable fallback for ties and legacy
-    /// entries without an added date. Undated publication years trail.
+    /// Group entries by publication year, descending. An exact publication
+    /// date supplies the year when available. Within each year, exact dates
+    /// lead in reverse chronology; library-addition date and then citekey are
+    /// stable fallbacks while legacy metadata is being backfilled.
     static func groupByYear(_ entries: [LibraryEntry]) -> [YearGroup] {
         var byYear: [Int?: [LibraryEntry]] = [:]
         byYear.reserveCapacity(120)
         for e in entries {
-            byYear[e.year, default: []].append(e)
+            byYear[publicationYear(for: e), default: []].append(e)
         }
         return byYear.keys.sorted { (a, b) in
             switch (a, b) {
@@ -68,12 +69,27 @@ enum LibraryFilter {
         .map { year in
             YearGroup(
                 year: year,
-                entries: (byYear[year] ?? []).sorted(by: newestAddedFirst)
+                entries: (byYear[year] ?? []).sorted(by: newestPublicationFirst)
             )
         }
     }
 
-    private static func newestAddedFirst(_ lhs: LibraryEntry, _ rhs: LibraryEntry) -> Bool {
+    private static func publicationYear(for entry: LibraryEntry) -> Int? {
+        if let publishedAt = entry.publishedAt,
+           publishedAt.count >= 4,
+           let year = Int(publishedAt.prefix(4)) {
+            return year
+        }
+        return entry.year
+    }
+
+    private static func newestPublicationFirst(
+        _ lhs: LibraryEntry,
+        _ rhs: LibraryEntry
+    ) -> Bool {
+        if lhs.publishedAt != rhs.publishedAt {
+            return (lhs.publishedAt ?? "") > (rhs.publishedAt ?? "")
+        }
         if lhs.addedAt != rhs.addedAt {
             return (lhs.addedAt ?? "") > (rhs.addedAt ?? "")
         }
