@@ -291,6 +291,53 @@ final class PDFViewerTests: XCTestCase {
     }
 
     @MainActor
+    func testDarkTransitionKeepsNativeScrollerVisibleWhilePDFKitSettles() throws {
+        let firstURL = try makeMultipageImplicitBackgroundPDF(pageCount: 8)
+        let nextURL = try makeMultipageImplicitBackgroundPDF(pageCount: 3)
+        let firstDocument = try XCTUnwrap(PDFDocument(url: firstURL))
+        let view = PDFThumbnailSplitView(configuration: .previewLike)
+        view.frame = NSRect(x: 0, y: 0, width: 800, height: 600)
+        view.pdfView.autoScales = true
+        view.pdfView.displayMode = .singlePageContinuous
+        view.pdfView.displayDirection = .vertical
+        view.setDocument(firstDocument)
+        view.layoutSubtreeIfNeeded()
+
+        let nativeScroller = try XCTUnwrap(view.nativePDFVerticalScroller)
+        nativeScroller.doubleValue = 0.35
+        nativeScroller.knobProportion = 0.18
+
+        _ = view.prepareForDocument(
+            url: nextURL,
+            descriptor: PDFFileCacheDescriptor(url: nextURL),
+            darkMode: true
+        )
+        view.layoutSubtreeIfNeeded()
+
+        XCTAssertTrue(view.isTransitionCoverVisible)
+        XCTAssertTrue(
+            view.isTransitionScrollerVisible,
+            "The native scroller bridge must appear with the PDF preview, not after it."
+        )
+        let nativeFrame = try XCTUnwrap(view.nativePDFScrollerFrame)
+        XCTAssertEqual(view.transitionScrollerFrame.minX, nativeFrame.minX, accuracy: 0.5)
+        XCTAssertEqual(view.transitionScrollerFrame.width, nativeFrame.width, accuracy: 0.5)
+        XCTAssertEqual(view.transitionScrollerValue, 0.35, accuracy: 0.001)
+        XCTAssertEqual(view.transitionScrollerKnobProportion, 0.18, accuracy: 0.001)
+
+        view.setDocument(nil, preservingThumbnails: true)
+        view.layoutSubtreeIfNeeded()
+
+        XCTAssertTrue(view.isTransitionScrollerVisible)
+        XCTAssertEqual(
+            view.transitionScrollerKnobProportion,
+            0.18,
+            accuracy: 0.001,
+            "Clearing the old PDF must not make its scroller bridge disappear."
+        )
+    }
+
+    @MainActor
     func testDarkDocumentTransitionKeepsOpaqueDarkCoverUntilTilesSettle() async throws {
         let url = try makeImplicitBackgroundPDF()
         let view = PDFThumbnailSplitView(configuration: .previewLike)
@@ -300,6 +347,7 @@ final class PDFViewerTests: XCTestCase {
         coordinator.load(url: url, darkMode: true, in: view)
 
         XCTAssertTrue(view.isTransitionCoverVisible)
+        XCTAssertTrue(view.isTransitionScrollerVisible)
         XCTAssertTrue(view.isTransitionCoverOpaque)
         XCTAssertEqual(
             view.transitionCoverBackgroundColor,
@@ -325,11 +373,13 @@ final class PDFViewerTests: XCTestCase {
             view.isTransitionCoverVisible,
             "The bridge must span PDFKit's native tile presentation interval."
         )
+        XCTAssertTrue(view.isTransitionScrollerVisible)
 
         for _ in 0..<40 where view.isTransitionCoverVisible {
             try await Task.sleep(for: .milliseconds(10))
         }
         XCTAssertFalse(view.isTransitionCoverVisible)
+        XCTAssertFalse(view.isTransitionScrollerVisible)
         XCTAssertFalse(view.isLoading)
     }
 
