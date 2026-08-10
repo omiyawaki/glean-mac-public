@@ -7,3 +7,7 @@ dist/
 build/visual-qa/
 .DS_Store
 glean.app/
+
+# Reproducible app-icon concept renders and review sheets. Keep their SVG and
+# Icon Composer sources under version control instead.
+Resources/AppIconConcepts/**/*.png
