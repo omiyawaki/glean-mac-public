@@ -4,36 +4,59 @@ import Observation
 @MainActor
 @Observable
 final class LibraryDetailStore {
+    typealias LoadRecord = (String) async throws -> LibraryRecord
+
     var record: LibraryRecord?
     var isLoading: Bool = false
     var error: String?
     var loadedCitekey: String?
 
-    private let recordLoader: LibraryRecordLoader
+    private let loadRecord: LoadRecord
+    private var loadGeneration = 0
 
     init(endpoints: GleanBackendEndpoints = .home) {
-        recordLoader = LibraryRecordLoader(endpoints: endpoints)
+        let recordLoader = LibraryRecordLoader(endpoints: endpoints)
+        loadRecord = { citekey in
+            try await recordLoader.load(citekey: citekey)
+        }
+    }
+
+    init(loadRecord: @escaping LoadRecord) {
+        self.loadRecord = loadRecord
     }
 
     func load(citekey: String?) async {
+        loadGeneration &+= 1
+        let generation = loadGeneration
+
         guard let citekey else {
             record = nil
             loadedCitekey = nil
             error = nil
+            isLoading = false
             return
         }
-        if loadedCitekey == citekey, record != nil { return }
+        if loadedCitekey == citekey, record != nil {
+            error = nil
+            isLoading = false
+            return
+        }
         error = nil
         isLoading = true
-        defer { isLoading = false }
-        do {
-            let decoded = try await recordLoader.load(citekey: citekey)
-            withAnimation(.smooth) {
-                record = decoded
-                loadedCitekey = citekey
-                error = nil
+        defer {
+            if loadGeneration == generation {
+                isLoading = false
             }
+        }
+        do {
+            let decoded = try await loadRecord(citekey)
+            guard loadGeneration == generation, !Task.isCancelled else { return }
+            record = decoded
+            loadedCitekey = citekey
+            error = nil
         } catch {
+            guard loadGeneration == generation else { return }
+            guard !Task.isCancelled, !(error is CancellationError) else { return }
             self.error = error.localizedDescription
         }
     }

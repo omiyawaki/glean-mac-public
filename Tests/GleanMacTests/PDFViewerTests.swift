@@ -133,7 +133,7 @@ final class PDFViewerTests: XCTestCase {
     }
 
     @MainActor
-    func testPDFThumbnailSidebarUsesDarkPageImagesWithoutInvertingChrome() throws {
+    func testPDFThumbnailSidebarUsesDarkPageImagesWithoutInvertingChrome() async throws {
         let url = try makeImplicitBackgroundPDF()
         let delegate = DarkPageDelegate()
         let document = try XCTUnwrap(PDFDocument(url: url))
@@ -146,6 +146,9 @@ final class PDFViewerTests: XCTestCase {
         view.layoutSubtreeIfNeeded()
 
         let item = try XCTUnwrap(view.thumbnailView.thumbnailItems.first)
+        for _ in 0..<100 where !item.hasRenderedThumbnail {
+            try await Task.sleep(for: .milliseconds(10))
+        }
         let image = try XCTUnwrap(item.thumbnailImage)
         XCTAssertGreaterThan(item.bounds.width, 0)
         XCTAssertGreaterThan(item.bounds.height, 0)
@@ -177,7 +180,7 @@ final class PDFViewerTests: XCTestCase {
     }
 
     @MainActor
-    func testThumbnailSidebarRendersRetinaImageForWideSidebar() throws {
+    func testThumbnailSidebarRendersRetinaImageForWideSidebar() async throws {
         let url = try makeImplicitBackgroundPDF()
         let delegate = DarkPageDelegate()
         let document = try XCTUnwrap(PDFDocument(url: url))
@@ -191,6 +194,9 @@ final class PDFViewerTests: XCTestCase {
         view.layoutSubtreeIfNeeded()
 
         let item = try XCTUnwrap(view.thumbnailView.thumbnailItems.first)
+        for _ in 0..<100 where !item.hasRenderedThumbnail {
+            try await Task.sleep(for: .milliseconds(10))
+        }
         let image = try XCTUnwrap(item.thumbnailImage)
         let cgImage = try XCTUnwrap(image.cgImage(forProposedRect: nil, context: nil, hints: nil))
         let displayWidth = item.bounds.width - 32
@@ -223,7 +229,7 @@ final class PDFViewerTests: XCTestCase {
     }
 
     @MainActor
-    func testThumbnailSidebarDoesNotRenderEveryPageSynchronouslyOnInitialLoad() throws {
+    func testThumbnailSidebarBuildsPagesIncrementallyWithoutBlockingInitialLoad() async throws {
         CountingPDFPage.drawCount = 0
         let url = try makeMultipageImplicitBackgroundPDF(pageCount: 12)
         let delegate = CountingPageDelegate()
@@ -235,11 +241,47 @@ final class PDFViewerTests: XCTestCase {
         view.setDocument(document)
         view.layoutSubtreeIfNeeded()
 
-        XCTAssertEqual(view.thumbnailView.thumbnailItems.count, 12)
-        XCTAssertLessThan(
+        XCTAssertEqual(
+            view.thumbnailView.thumbnailItems.count,
+            PDFThumbnailSidebarView.initialSynchronousItemCount
+        )
+        XCTAssertEqual(
             CountingPDFPage.drawCount,
+            0,
+            "Initial sidebar load must not rasterize any PDF page on the main actor."
+        )
+
+        for _ in 0..<100 where view.thumbnailView.thumbnailItems.count < 12 {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        XCTAssertEqual(
+            view.thumbnailView.thumbnailItems.count,
             12,
-            "Initial sidebar load should render only an immediate visible budget, then defer the rest so sidebar switches stay fast."
+            "The complete thumbnail list should fill in after yielding to the run loop."
+        )
+    }
+
+    @MainActor
+    func testThumbnailSidebarCancelsPendingPageConstructionWhenDocumentChanges() async throws {
+        let firstURL = try makeMultipageImplicitBackgroundPDF(pageCount: 40)
+        let secondURL = try makeMultipageImplicitBackgroundPDF(pageCount: 2)
+        let firstDocument = try XCTUnwrap(PDFDocument(url: firstURL))
+        let secondDocument = try XCTUnwrap(PDFDocument(url: secondURL))
+        let view = PDFThumbnailSplitView(configuration: .previewLike)
+        view.frame = NSRect(x: 0, y: 0, width: 800, height: 500)
+
+        view.setDocument(firstDocument)
+        XCTAssertEqual(view.thumbnailView.thumbnailItems.count, 1)
+
+        view.setDocument(secondDocument)
+        for _ in 0..<30 where view.thumbnailView.thumbnailItems.count < 2 {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        XCTAssertEqual(view.thumbnailView.thumbnailItems.count, 2)
+        XCTAssertTrue(
+            view.thumbnailView.thumbnailItems.allSatisfy { $0.page.document === secondDocument }
         )
     }
 
