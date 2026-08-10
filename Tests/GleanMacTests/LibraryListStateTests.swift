@@ -88,6 +88,7 @@ final class LibraryListStateTests: XCTestCase {
 
     func testLibraryRowsUseFixedHeightForFastSearchClear() {
         XCTAssertEqual(LibraryRowLayout.rowHeight, 72, accuracy: 0.001)
+        XCTAssertEqual(LibraryRowLayout.contentInset, 12, accuracy: 0.001)
     }
 
     func testLibraryListIdentitySeparatesAllAndFilteredSearchStates() {

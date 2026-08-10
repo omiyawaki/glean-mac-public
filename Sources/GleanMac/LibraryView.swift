@@ -11,6 +11,7 @@ enum LibraryRowLayout {
     static let rowHeight: CGFloat = 72
     static let separatorHeight: CGFloat = 1
     static let sectionHeaderHeight: CGFloat = 34
+    static let contentInset: CGFloat = 12
     /// The collapsed rail occupies 22 points and sits 22 points inward from
     /// the native scrollbar. This gutter gives both controls permanent space
     /// without sacrificing the expanded overlay behavior.
@@ -107,7 +108,7 @@ struct LibraryView: View {
                         Text(title)
                             .font(.headline)
                             .foregroundStyle(.secondary)
-                            .padding(.horizontal, 12)
+                            .padding(.horizontal, LibraryRowLayout.contentInset)
                             .frame(
                                 maxWidth: .infinity,
                                 minHeight: LibraryRowLayout.sectionHeaderHeight,
@@ -145,7 +146,7 @@ struct LibraryView: View {
                                 )
 
                             Divider()
-                                .padding(.leading, 12)
+                                .padding(.leading, LibraryRowLayout.contentInset)
                                 .frame(height: LibraryRowLayout.separatorHeight)
                         }
                         .frame(
@@ -187,8 +188,9 @@ struct LibraryView: View {
                         )
                     },
                     tickStrideCandidates: [1, 3, 6, 12, 24, 60, 120, 240, 600],
-                    // One base tick per publication year. Hover magnification
-                    // reveals the twelve monthly positions between them.
+                    // Keep one stable annual tick cadence in both states.
+                    // Pointer targeting still resolves the complete monthly
+                    // chronology while those same ticks magnify on hover.
                     minimumTickStride: 12,
                     tickAlignment: chronology.firstIndex(where: \.isYearBoundary) ?? 0,
                     onSelect: { marker in
@@ -276,7 +278,7 @@ private struct LibraryRow: View {
                 .lineLimit(1)
         }
         .padding(.vertical, 6)
-        .padding(.horizontal, 6)
+        .padding(.horizontal, LibraryRowLayout.contentInset)
         .frame(height: LibraryRowLayout.rowHeight, alignment: .center)
         .background(
             RoundedRectangle(cornerRadius: 6, style: .continuous)
