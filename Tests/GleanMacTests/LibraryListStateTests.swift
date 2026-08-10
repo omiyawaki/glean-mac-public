@@ -91,6 +91,19 @@ final class LibraryListStateTests: XCTestCase {
         XCTAssertEqual(LibraryRowLayout.contentInset, 20, accuracy: 0.001)
     }
 
+    @MainActor
+    func testLibraryRowsSelectThenOpenPDFOnDoubleClick() {
+        var events: [String] = []
+
+        LibraryRowInteraction.handleDoubleClick(
+            select: { events.append("select") },
+            openPDF: { events.append("open-pdf") }
+        )
+
+        XCTAssertEqual(LibraryRowInteraction.openPDFTapCount, 2)
+        XCTAssertEqual(events, ["select", "open-pdf"])
+    }
+
     func testLibraryListIdentitySeparatesAllAndFilteredSearchStates() {
         XCTAssertEqual(LibraryListIdentity.value(forQuery: ""), "library-all")
         XCTAssertEqual(LibraryListIdentity.value(forQuery: "   \n"), "library-all")

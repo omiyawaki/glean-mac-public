@@ -20,6 +20,19 @@ enum LibraryRowLayout {
     static let collapsedRailGutter: CGFloat = 48
 }
 
+enum LibraryRowInteraction {
+    static let openPDFTapCount = 2
+
+    @MainActor
+    static func handleDoubleClick(
+        select: () -> Void,
+        openPDF: () -> Void
+    ) {
+        select()
+        openPDF()
+    }
+}
+
 struct LibraryView: View {
     let store: LibraryStore
     let listState: LibraryListState
@@ -123,6 +136,9 @@ struct LibraryView: View {
                                        showRelations: showRelations,
                                        reportActionError: { message in
                                            actionErrorMessage = message
+                                       },
+                                       onDoubleClick: {
+                                           selection = entry.id
                                        },
                                        onDropPDFs: { urls in
                                            enqueueForceAttach(urls: urls,
@@ -256,6 +272,7 @@ private struct LibraryRow: View {
     let loadedRecord: LibraryRecord?
     let showRelations: (LibraryEntry, LibraryRelationKind) -> Void
     let reportActionError: (String) -> Void
+    let onDoubleClick: () -> Void
     let onDropPDFs: ([URL]) -> Bool
     @State private var isDropTargeted = false
 
@@ -359,16 +376,7 @@ private struct LibraryRow: View {
             .disabled(!LibraryExternalLinkAction.canOpenDOI(from: entry))
 
             Button {
-                Task {
-                    do {
-                        try await LibraryPaperFileAction().openPDF(
-                            for: entry,
-                            loadedRecord: loadedRecord
-                        )
-                    } catch {
-                        reportActionError(error.localizedDescription)
-                    }
-                }
+                openPDFExternally()
             } label: {
                 Label(LibraryPaperFileAction.openPDFMenuTitle, systemImage: "doc.richtext")
             }
@@ -409,9 +417,31 @@ private struct LibraryRow: View {
                 }
             }
         }
+        .simultaneousGesture(
+            TapGesture(count: LibraryRowInteraction.openPDFTapCount)
+                .onEnded {
+                    LibraryRowInteraction.handleDoubleClick(
+                        select: onDoubleClick,
+                        openPDF: openPDFExternally
+                    )
+                }
+        )
         .dropDestination(for: URL.self) { urls, _ in
             onDropPDFs(urls)
         } isTargeted: { isDropTargeted = $0 }
+    }
+
+    private func openPDFExternally() {
+        Task {
+            do {
+                try await LibraryPaperFileAction().openPDF(
+                    for: entry,
+                    loadedRecord: loadedRecord
+                )
+            } catch {
+                reportActionError(error.localizedDescription)
+            }
+        }
     }
 
     private var authorLine: String {
