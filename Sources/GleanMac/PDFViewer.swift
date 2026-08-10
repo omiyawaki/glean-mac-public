@@ -1637,15 +1637,14 @@ final class PDFThumbnailSplitView: NSView, NSSplitViewDelegate {
     /// been quiet for several display frames.
     private func scheduleTransitionCoverDismissal(for documentURL: URL) {
         transitionCoverDismissalTask?.cancel()
-        // An exact page bitmap needs only a brief frame-spanning quiet period.
-        // Background-only cold loads retain the longer guard because exposing
-        // an incomplete PDFKit tile set would flash white.
-        let settleDelay: Duration = warmPreviewView.image == nil
-            ? .milliseconds(80)
-            : .milliseconds(24)
         transitionCoverDismissalTask = Task { [weak self] in
             do {
-                try await Task.sleep(for: settleDelay)
+                // PDFKit can pause between native tile draws even when an
+                // exact cached page image is available. Keep that stable image
+                // above PDFKit until the entire tile stream has been quiet;
+                // using one invariant here prevents latency tuning from
+                // reintroducing a white gap on complex papers.
+                try await Task.sleep(for: .milliseconds(80))
             } catch {
                 return
             }

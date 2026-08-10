@@ -271,6 +271,44 @@ final class PDFViewerTests: XCTestCase {
     }
 
     @MainActor
+    func testImageBackedTransitionSurvivesDelayedPDFKitTileDraws() async throws {
+        let url = try makeImplicitBackgroundPDF()
+        let view = PDFThumbnailSplitView(configuration: .previewLike)
+        view.frame = NSRect(x: 0, y: 0, width: 800, height: 600)
+        view.layoutSubtreeIfNeeded()
+        let coordinator = PDFViewer.Coordinator()
+
+        coordinator.load(url: url, darkMode: true, in: view)
+        let document = try await waitForDocument(in: view)
+        let page = try XCTUnwrap(document.page(at: 0) as? InvertedPDFPage)
+        let context = try makeBitmapContext(width: 240, height: 240)
+        XCTAssertTrue(
+            view.transitionCoverHasImage,
+            "The regression requires the image-backed warm transition path."
+        )
+
+        page.draw(with: .mediaBox, to: context)
+        await Task.yield()
+        try await Task.sleep(for: .milliseconds(40))
+        XCTAssertTrue(
+            view.isTransitionCoverVisible,
+            "A complex PDF can pause longer than 24 ms between native tile draws."
+        )
+
+        // A later tile must restart the same quiescence window rather than
+        // exposing PDFKit between draws.
+        page.draw(with: .mediaBox, to: context)
+        await Task.yield()
+        try await Task.sleep(for: .milliseconds(40))
+        XCTAssertTrue(view.isTransitionCoverVisible)
+
+        for _ in 0..<20 where view.isTransitionCoverVisible {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertFalse(view.isTransitionCoverVisible)
+    }
+
+    @MainActor
     func testColdDarkLoadPublishesPreparedPreviewBeforeLiveTilesSettle() async throws {
         let url = try makeImplicitBackgroundPDF()
         let view = PDFThumbnailSplitView(configuration: .previewLike)
