@@ -836,11 +836,12 @@ private final class PDFWarmPreviewView: NSView {
     var backgroundColor: NSColor = .clear
     var onFirstDraw: ((URL, LibraryPDFLatencyTracker.FrameSource, ContinuousClock.Instant) -> Void)?
     private var targetPageRect: NSRect?
+    private var passthroughRect: NSRect?
 
     private(set) var reportedCurrentImage = false
 
     override var isOpaque: Bool {
-        backgroundColor.alphaComponent >= 1
+        backgroundColor.alphaComponent >= 1 && passthroughRect == nil
     }
 
     func show(
@@ -874,6 +875,7 @@ private final class PDFWarmPreviewView: NSView {
         documentURL = nil
         frameSource = nil
         targetPageRect = nil
+        passthroughRect = nil
         reportedCurrentImage = false
     }
 
@@ -883,16 +885,34 @@ private final class PDFWarmPreviewView: NSView {
         needsDisplay = true
     }
 
+    func exposeUnderlyingView(in rect: NSRect?) {
+        let standardizedRect = rect?.standardized
+        guard passthroughRect != standardizedRect else { return }
+        passthroughRect = standardizedRect
+        needsDisplay = true
+    }
+
     var currentImageRect: NSRect? {
         guard image != nil else { return nil }
         return targetPageRect
     }
+
+    var currentPassthroughRect: NSRect? { passthroughRect }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
         nil
     }
 
     override func draw(_ dirtyRect: NSRect) {
+        NSGraphicsContext.saveGraphicsState()
+        if let passthroughRect {
+            let visiblePath = NSBezierPath(rect: bounds)
+            visiblePath.appendRect(passthroughRect)
+            visiblePath.windingRule = .evenOdd
+            visiblePath.addClip()
+        }
+        defer { NSGraphicsContext.restoreGraphicsState() }
+
         backgroundColor.setFill()
         dirtyRect.fill()
         guard let image,
@@ -916,20 +936,6 @@ private final class PDFWarmPreviewView: NSView {
         }
     }
 
-}
-
-/// A native AppKit scroller that mirrors PDFKit's vertical scroller while the
-/// transition cover is above the PDF view. The cover intentionally remains
-/// opaque until every PDFKit tile has settled; mirroring only the scroller
-/// keeps that anti-flash guarantee without making the scroll position appear
-/// hundreds of milliseconds after the already-visible page preview.
-@MainActor
-private final class PDFTransitionScroller: NSScroller {
-    override func hitTest(_ point: NSPoint) -> NSView? {
-        // Let gestures reach PDFKit's real scroller as soon as its new
-        // document is ready. This view is a presentation bridge only.
-        nil
-    }
 }
 
 /// PDFKit's PDFView wrapped for SwiftUI. Single-page-continuous, autoscales
@@ -1234,11 +1240,12 @@ struct PDFViewer: NSViewRepresentable {
                 return
             }
 
-            // Remove the previous document immediately so PDFKit is not still
-            // drawing it while a different selection is being prepared.
-            if previousURL != url {
-                splitView.setDocument(nil, preservingThumbnails: true)
-            }
+            // Keep the existing PDFKit scroll view intact while the next
+            // document is prepared. The opaque transition cover hides its
+            // page pixels, while a transparent exclusion leaves PDFKit's one
+            // real vertical scroller continuously visible. Replacing the
+            // document only after preparation avoids both an empty-scroller
+            // interval and a synthetic-to-PDFKit visual handoff.
             splitView.setLoading(true)
 
             loadTask = Task { [weak self, weak splitView] in
@@ -1355,10 +1362,8 @@ final class PDFThumbnailSplitView: NSView, NSSplitViewDelegate {
     private let mainPane = NSView()
     private let loadingIndicator = NSProgressIndicator()
     private let warmPreviewView = PDFWarmPreviewView()
-    private let transitionScroller = PDFTransitionScroller()
     private let thumbnailBackgroundView = NSVisualEffectView()
     private let configuration: PDFThumbnailSidebarConfiguration
-    private var transitionScrollerWidthConstraint: NSLayoutConstraint?
     private var didApplyInitialThumbnailWidth = false
     private var thumbnailDarkMode: Bool?
     private var warmPreviewKey: String?
@@ -1380,21 +1385,20 @@ final class PDFThumbnailSplitView: NSView, NSSplitViewDelegate {
         LibraryPDFLatencyTracker.FrameSource?
 
     var isTransitionCoverVisible: Bool { !warmPreviewView.isHidden }
-    var isTransitionCoverOpaque: Bool { warmPreviewView.isOpaque }
+    var isTransitionCoverOpaque: Bool {
+        warmPreviewView.backgroundColor.alphaComponent >= 1
+    }
     var transitionCoverHasImage: Bool { warmPreviewView.image != nil }
     var transitionCoverFrameSource: LibraryPDFLatencyTracker.FrameSource? {
         warmPreviewView.frameSource
     }
     var transitionCoverBackgroundColor: NSColor { warmPreviewView.backgroundColor }
     var transitionCoverImageRect: NSRect? { warmPreviewView.currentImageRect }
+    var transitionCoverPassthroughRect: NSRect? {
+        warmPreviewView.currentPassthroughRect
+    }
     var loadingIndicatorStyle: NSProgressIndicator.Style { loadingIndicator.style }
     var loadingIndicatorIsIndeterminate: Bool { loadingIndicator.isIndeterminate }
-    var isTransitionScrollerVisible: Bool { !transitionScroller.isHidden }
-    var transitionScrollerFrame: NSRect { transitionScroller.frame }
-    var transitionScrollerValue: Double { transitionScroller.doubleValue }
-    var transitionScrollerKnobProportion: CGFloat {
-        transitionScroller.knobProportion
-    }
     var nativePDFVerticalScroller: NSScroller? {
         nativePDFScrollView?.verticalScroller
     }
@@ -1436,7 +1440,7 @@ final class PDFThumbnailSplitView: NSView, NSSplitViewDelegate {
         super.layout()
         applyInitialThumbnailWidthIfNeeded()
         demoteWarmPreviewIfViewportChangedBeforeDocumentLoad()
-        synchronizeTransitionScrollerWithPDFView()
+        exposeNativePDFScrollerThroughTransitionCover()
         refreshVisibleRenderCoverageIfNeeded()
     }
 
@@ -1461,9 +1465,7 @@ final class PDFThumbnailSplitView: NSView, NSSplitViewDelegate {
         }
         promotePendingWarmPreviewIfPossible()
         alignTransitionCoverToCurrentPage()
-        if document != nil {
-            synchronizeTransitionScrollerWithPDFView()
-        }
+        exposeNativePDFScrollerThroughTransitionCover()
         refreshVisibleRenderCoverageIfNeeded()
     }
 
@@ -1496,11 +1498,10 @@ final class PDFThumbnailSplitView: NSView, NSSplitViewDelegate {
                 warmPreviewView.showBackground(
                     documentURL: url.standardizedFileURL
                 )
-                showTransitionScroller()
             } else {
                 warmPreviewView.hide()
-                transitionScroller.isHidden = true
             }
+            exposeNativePDFScrollerThroughTransitionCover()
             setLoading(true)
             return nil
         }
@@ -1573,7 +1574,7 @@ final class PDFThumbnailSplitView: NSView, NSSplitViewDelegate {
         if displayImmediately {
             warmPreviewView.displayIfNeeded()
         }
-        showTransitionScroller()
+        exposeNativePDFScrollerThroughTransitionCover()
     }
 
     private func promotePendingWarmPreviewIfPossible() {
@@ -1616,7 +1617,7 @@ final class PDFThumbnailSplitView: NSView, NSSplitViewDelegate {
         self.presentedWarmPreview = nil
         latestPresentedTransitionFrameSource = nil
         warmPreviewView.showBackground(documentURL: documentURL)
-        showTransitionScroller()
+        exposeNativePDFScrollerThroughTransitionCover()
         setLoading(true)
     }
 
@@ -1631,7 +1632,6 @@ final class PDFThumbnailSplitView: NSView, NSSplitViewDelegate {
         pendingWarmPreview = nil
         presentedWarmPreview = nil
         warmPreviewView.hide()
-        transitionScroller.isHidden = true
         visibleRenderCoverage.reset(expected: [:])
     }
 
@@ -1643,9 +1643,8 @@ final class PDFThumbnailSplitView: NSView, NSSplitViewDelegate {
     func displayTransitionCoverIfNeeded() {
         guard !warmPreviewView.isHidden else { return }
         alignTransitionCoverToCurrentPage()
-        showTransitionScroller()
+        exposeNativePDFScrollerThroughTransitionCover()
         warmPreviewView.displayIfNeeded()
-        transitionScroller.displayIfNeeded()
     }
 
     func alignTransitionCoverToCurrentPage() {
@@ -1674,7 +1673,7 @@ final class PDFThumbnailSplitView: NSView, NSSplitViewDelegate {
         else { return }
         warmPreviewView.alignImage(to: pageRectInPreview)
         cacheExactPlacementIfNeeded(pageRect: pageRectInPreview)
-        synchronizeTransitionScrollerWithPDFView()
+        exposeNativePDFScrollerThroughTransitionCover()
         refreshVisibleRenderCoverageIfNeeded()
     }
 
@@ -1835,7 +1834,6 @@ final class PDFThumbnailSplitView: NSView, NSSplitViewDelegate {
         thumbnailBackgroundView.translatesAutoresizingMaskIntoConstraints = false
         pdfView.translatesAutoresizingMaskIntoConstraints = false
         warmPreviewView.translatesAutoresizingMaskIntoConstraints = false
-        transitionScroller.translatesAutoresizingMaskIntoConstraints = false
         thumbnailView.translatesAutoresizingMaskIntoConstraints = false
         loadingIndicator.translatesAutoresizingMaskIntoConstraints = false
 
@@ -1846,7 +1844,6 @@ final class PDFThumbnailSplitView: NSView, NSSplitViewDelegate {
         mainPane.addSubview(pdfView)
         mainPane.addSubview(warmPreviewView)
         mainPane.addSubview(loadingIndicator)
-        mainPane.addSubview(transitionScroller)
         thumbnailPane.addSubview(thumbnailBackgroundView)
         thumbnailPane.addSubview(thumbnailView)
 
@@ -1860,7 +1857,6 @@ final class PDFThumbnailSplitView: NSView, NSSplitViewDelegate {
         loadingIndicator.isDisplayedWhenStopped = false
         loadingIndicator.isHidden = true
         warmPreviewView.isHidden = true
-        transitionScroller.isHidden = true
         warmPreviewView.onFirstDraw = { [weak self] documentURL, source, finishedAt in
             LibraryPDFLatencyTracker.shared.recordFirstPageDraw(
                 documentURL: documentURL,
@@ -1882,13 +1878,6 @@ final class PDFThumbnailSplitView: NSView, NSSplitViewDelegate {
         thumbnailView.allowsMultipleSelection = false
         thumbnailView.backgroundColor = .clear
 
-        let transitionScrollerWidthConstraint = transitionScroller.widthAnchor
-            .constraint(equalToConstant: NSScroller.scrollerWidth(
-                for: .regular,
-                scrollerStyle: .legacy
-            ))
-        self.transitionScrollerWidthConstraint = transitionScrollerWidthConstraint
-
         NSLayoutConstraint.activate([
             splitView.leadingAnchor.constraint(equalTo: leadingAnchor),
             splitView.trailingAnchor.constraint(equalTo: trailingAnchor),
@@ -1905,11 +1894,6 @@ final class PDFThumbnailSplitView: NSView, NSSplitViewDelegate {
             warmPreviewView.topAnchor.constraint(equalTo: mainPane.topAnchor),
             warmPreviewView.bottomAnchor.constraint(equalTo: mainPane.bottomAnchor),
 
-            transitionScroller.trailingAnchor.constraint(equalTo: mainPane.trailingAnchor),
-            transitionScroller.topAnchor.constraint(equalTo: mainPane.topAnchor),
-            transitionScroller.bottomAnchor.constraint(equalTo: mainPane.bottomAnchor),
-            transitionScrollerWidthConstraint,
-
             loadingIndicator.centerXAnchor.constraint(equalTo: mainPane.centerXAnchor),
             loadingIndicator.centerYAnchor.constraint(equalTo: mainPane.centerYAnchor),
             loadingIndicator.widthAnchor.constraint(equalToConstant: 180),
@@ -1924,7 +1908,7 @@ final class PDFThumbnailSplitView: NSView, NSSplitViewDelegate {
             thumbnailView.topAnchor.constraint(equalTo: thumbnailPane.topAnchor),
             thumbnailView.bottomAnchor.constraint(equalTo: thumbnailPane.bottomAnchor)
         ])
-        synchronizeTransitionScrollerWithPDFView()
+        exposeNativePDFScrollerThroughTransitionCover()
     }
 
     private var nativePDFScrollView: NSScrollView? {
@@ -1943,34 +1927,25 @@ final class PDFThumbnailSplitView: NSView, NSSplitViewDelegate {
         return nil
     }
 
-    private func showTransitionScroller() {
-        synchronizeTransitionScrollerWithPDFView()
-        transitionScroller.isHidden = false
-        transitionScroller.needsDisplay = true
-    }
-
-    private func synchronizeTransitionScrollerWithPDFView() {
-        guard let nativeScroller = nativePDFVerticalScroller else { return }
-        let nativeFrame = mainPane.convert(
+    private func exposeNativePDFScrollerThroughTransitionCover() {
+        pdfView.layoutSubtreeIfNeeded()
+        guard !warmPreviewView.isHidden,
+              let nativeScroller = nativePDFVerticalScroller
+        else {
+            warmPreviewView.exposeUnderlyingView(in: nil)
+            return
+        }
+        let scrollerFrame = warmPreviewView.convert(
             nativeScroller.bounds,
             from: nativeScroller
         )
-        if nativeFrame.width > 0 {
-            transitionScrollerWidthConstraint?.constant = nativeFrame.width
-        }
-        transitionScroller.scrollerStyle = nativeScroller.scrollerStyle
-        transitionScroller.knobStyle = nativeScroller.knobStyle
-        transitionScroller.controlSize = nativeScroller.controlSize
-        // Clearing the previous PDF is important for rapid-selection
-        // responsiveness. Preserve its last exact scroller presentation while
-        // the new document is prepared instead of replacing it with PDFKit's
-        // empty-document state.
-        guard pdfView.document != nil || transitionScroller.isHidden else {
+        guard scrollerFrame.width > 0,
+              scrollerFrame.height > 0
+        else {
+            warmPreviewView.exposeUnderlyingView(in: nil)
             return
         }
-        transitionScroller.isEnabled = nativeScroller.isEnabled
-        transitionScroller.doubleValue = nativeScroller.doubleValue
-        transitionScroller.knobProportion = nativeScroller.knobProportion
+        warmPreviewView.exposeUnderlyingView(in: scrollerFrame)
     }
 
     @objc
@@ -2035,9 +2010,7 @@ final class PDFThumbnailSplitView: NSView, NSSplitViewDelegate {
                     == documentURL.standardizedFileURL
             else { return }
             let revealedDarkTransition = !self.warmPreviewView.reportedCurrentImage
-            self.synchronizeTransitionScrollerWithPDFView()
             self.warmPreviewView.hide()
-            self.transitionScroller.isHidden = true
             self.setLoading(false)
             if revealedDarkTransition {
                 LibraryPDFLatencyTracker.shared.recordFirstPageDraw(

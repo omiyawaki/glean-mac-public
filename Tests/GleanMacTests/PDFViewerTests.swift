@@ -122,6 +122,36 @@ final class PDFViewerTests: XCTestCase {
     }
 
     @MainActor
+    func testPreparingNextPDFKeepsTheExistingPDFKitScrollerInstalled() async throws {
+        let firstURL = try makeMultipageImplicitBackgroundPDF(pageCount: 8)
+        let nextURL = try makeMultipageImplicitBackgroundPDF(pageCount: 3)
+        let view = PDFThumbnailSplitView(configuration: .previewLike)
+        view.frame = NSRect(x: 0, y: 0, width: 800, height: 600)
+        view.pdfView.autoScales = true
+        view.pdfView.displayMode = .singlePageContinuous
+        view.pdfView.displayDirection = .vertical
+        let coordinator = PDFViewer.Coordinator()
+
+        coordinator.load(url: firstURL, darkMode: true, in: view)
+        let firstDocument = try await waitForDocument(in: view)
+        view.layoutSubtreeIfNeeded()
+        let nativeScroller = try XCTUnwrap(view.nativePDFVerticalScroller)
+
+        coordinator.load(url: nextURL, darkMode: true, in: view)
+
+        XCTAssertIdentical(
+            view.pdfView.document,
+            firstDocument,
+            "Preparing a replacement must not tear down PDFKit's live scroll view."
+        )
+        XCTAssertIdentical(view.nativePDFVerticalScroller, nativeScroller)
+        XCTAssertTrue(view.isTransitionCoverVisible)
+        XCTAssertNotNil(view.transitionCoverPassthroughRect)
+        _ = try await waitForDocument(in: view, differentFrom: firstDocument)
+        XCTAssertIdentical(view.nativePDFVerticalScroller, nativeScroller)
+    }
+
+    @MainActor
     func testLatencyMetricCompletesWhenMainPagePixelsAreDrawn() async throws {
         let url = try makeImplicitBackgroundPDF()
         let delegate = LatencyPageDelegate()
@@ -291,10 +321,11 @@ final class PDFViewerTests: XCTestCase {
     }
 
     @MainActor
-    func testDarkTransitionKeepsNativeScrollerVisibleWhilePDFKitSettles() throws {
+    func testDarkTransitionExposesTheOnePDFKitScrollerThroughItsCover() throws {
         let firstURL = try makeMultipageImplicitBackgroundPDF(pageCount: 8)
         let nextURL = try makeMultipageImplicitBackgroundPDF(pageCount: 3)
         let firstDocument = try XCTUnwrap(PDFDocument(url: firstURL))
+        let nextDocument = try XCTUnwrap(PDFDocument(url: nextURL))
         let view = PDFThumbnailSplitView(configuration: .previewLike)
         view.frame = NSRect(x: 0, y: 0, width: 800, height: 600)
         view.pdfView.autoScales = true
@@ -304,9 +335,6 @@ final class PDFViewerTests: XCTestCase {
         view.layoutSubtreeIfNeeded()
 
         let nativeScroller = try XCTUnwrap(view.nativePDFVerticalScroller)
-        nativeScroller.doubleValue = 0.35
-        nativeScroller.knobProportion = 0.18
-
         _ = view.prepareForDocument(
             url: nextURL,
             descriptor: PDFFileCacheDescriptor(url: nextURL),
@@ -315,26 +343,21 @@ final class PDFViewerTests: XCTestCase {
         view.layoutSubtreeIfNeeded()
 
         XCTAssertTrue(view.isTransitionCoverVisible)
-        XCTAssertTrue(
-            view.isTransitionScrollerVisible,
-            "The native scroller bridge must appear with the PDF preview, not after it."
-        )
         let nativeFrame = try XCTUnwrap(view.nativePDFScrollerFrame)
-        XCTAssertEqual(view.transitionScrollerFrame.minX, nativeFrame.minX, accuracy: 0.5)
-        XCTAssertEqual(view.transitionScrollerFrame.width, nativeFrame.width, accuracy: 0.5)
-        XCTAssertEqual(view.transitionScrollerValue, 0.35, accuracy: 0.001)
-        XCTAssertEqual(view.transitionScrollerKnobProportion, 0.18, accuracy: 0.001)
+        let passthroughRect = try XCTUnwrap(view.transitionCoverPassthroughRect)
+        XCTAssertEqual(passthroughRect.minX, nativeFrame.minX, accuracy: 0.5)
+        XCTAssertEqual(passthroughRect.width, nativeFrame.width, accuracy: 0.5)
+        XCTAssertIdentical(view.nativePDFVerticalScroller, nativeScroller)
 
-        view.setDocument(nil, preservingThumbnails: true)
+        view.setDocument(nextDocument)
         view.layoutSubtreeIfNeeded()
 
-        XCTAssertTrue(view.isTransitionScrollerVisible)
-        XCTAssertEqual(
-            view.transitionScrollerKnobProportion,
-            0.18,
-            accuracy: 0.001,
-            "Clearing the old PDF must not make its scroller bridge disappear."
+        XCTAssertIdentical(
+            view.nativePDFVerticalScroller,
+            nativeScroller,
+            "The transition must retain PDFKit's actual NSScroller instead of swapping in a copy."
         )
+        XCTAssertNotNil(view.transitionCoverPassthroughRect)
     }
 
     @MainActor
@@ -342,12 +365,13 @@ final class PDFViewerTests: XCTestCase {
         let url = try makeImplicitBackgroundPDF()
         let view = PDFThumbnailSplitView(configuration: .previewLike)
         view.frame = NSRect(x: 0, y: 0, width: 800, height: 600)
+        view.layoutSubtreeIfNeeded()
         let coordinator = PDFViewer.Coordinator()
 
         coordinator.load(url: url, darkMode: true, in: view)
 
         XCTAssertTrue(view.isTransitionCoverVisible)
-        XCTAssertTrue(view.isTransitionScrollerVisible)
+        XCTAssertNotNil(view.transitionCoverPassthroughRect)
         XCTAssertTrue(view.isTransitionCoverOpaque)
         XCTAssertEqual(
             view.transitionCoverBackgroundColor,
@@ -373,13 +397,13 @@ final class PDFViewerTests: XCTestCase {
             view.isTransitionCoverVisible,
             "The bridge must span PDFKit's native tile presentation interval."
         )
-        XCTAssertTrue(view.isTransitionScrollerVisible)
+        XCTAssertNotNil(view.transitionCoverPassthroughRect)
 
         for _ in 0..<40 where view.isTransitionCoverVisible {
             try await Task.sleep(for: .milliseconds(10))
         }
         XCTAssertFalse(view.isTransitionCoverVisible)
-        XCTAssertFalse(view.isTransitionScrollerVisible)
+        XCTAssertNil(view.transitionCoverPassthroughRect)
         XCTAssertFalse(view.isLoading)
     }
 
@@ -970,15 +994,27 @@ final class PDFViewerTests: XCTestCase {
     @MainActor
     private func waitForDocument(
         in view: PDFThumbnailSplitView,
+        differentFrom previousDocument: PDFDocument? = nil,
         attempts: Int = 200
     ) async throws -> PDFDocument {
         for _ in 0..<attempts {
-            if let document = view.pdfView.document {
+            if let document = view.pdfView.document,
+               previousDocument == nil || document !== previousDocument {
                 return document
             }
             try await Task.sleep(for: .milliseconds(10))
         }
-        return try XCTUnwrap(view.pdfView.document, "Timed out waiting for PDF preparation.")
+        let document = try XCTUnwrap(
+            view.pdfView.document,
+            "Timed out waiting for PDF preparation."
+        )
+        if let previousDocument {
+            XCTAssertFalse(
+                document === previousDocument,
+                "Timed out waiting for the replacement PDF document."
+            )
+        }
+        return document
     }
 
     private func averageGray(in image: NSImage, rect: CGRect) throws -> CGFloat {
