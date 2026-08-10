@@ -16,6 +16,53 @@ struct PDFThumbnailSidebarConfiguration: Equatable {
     )
 }
 
+private struct PDFFileCacheDescriptor: Sendable {
+    let identity: String
+    let estimatedCost: Int
+
+    init(url: URL) {
+        let standardizedURL = url.standardizedFileURL
+        let attributes = try? FileManager.default.attributesOfItem(
+            atPath: standardizedURL.path
+        )
+        let fileSize = (attributes?[.size] as? NSNumber)?.intValue
+        let modificationDate = attributes?[.modificationDate] as? Date
+        let modificationStamp = modificationDate?.timeIntervalSinceReferenceDate.bitPattern ?? 0
+
+        identity = [
+            standardizedURL.path,
+            String(fileSize ?? 0),
+            String(modificationStamp)
+        ].joined(separator: "|")
+        estimatedCost = max(fileSize ?? 0, 1)
+    }
+}
+
+/// Retains only the rendered pixels most likely to be revisited. `NSCache`
+/// automatically yields entries under memory pressure in addition to these
+/// explicit count and decoded-pixel limits.
+private final class PDFThumbnailMemoryCache: @unchecked Sendable {
+    static let shared = PDFThumbnailMemoryCache()
+    static let totalCostLimit = 96 * 1_024 * 1_024
+    static let countLimit = 512
+
+    private let cache = NSCache<NSString, NSImage>()
+
+    private init() {
+        cache.totalCostLimit = Self.totalCostLimit
+        cache.countLimit = Self.countLimit
+        cache.name = "Glean PDF thumbnails"
+    }
+
+    func image(for key: String) -> NSImage? {
+        cache.object(forKey: key as NSString)
+    }
+
+    func insert(_ image: NSImage, for key: String, cost: Int) {
+        cache.setObject(image, forKey: key as NSString, cost: max(cost, 1))
+    }
+}
+
 /// PDFKit's PDFView wrapped for SwiftUI. Single-page-continuous, autoscales
 /// to width — matches Preview.app's default reading layout. The view diffs
 /// the document URL on update so swapping rows doesn't tear down the view.
@@ -72,24 +119,13 @@ struct PDFViewer: NSViewRepresentable {
         coordinator.cancelLoading()
     }
 
-    /// PDFKit document parsing is synchronous and can take hundreds of
-    /// milliseconds for large books. Keeping it on one background actor means
-    /// the UI remains responsive and rapid selection never fans out into a
-    /// collection of simultaneous PDF parses.
-    private actor DocumentPreparer {
-        static let shared = DocumentPreparer()
-
-        func prepare(url: URL) -> PreparedDocument? {
-            guard !Task.isCancelled else { return nil }
-            return PreparedDocument(document: PDFDocument(url: url))
-        }
-    }
-
     private final class PreparedDocument: @unchecked Sendable {
-        let document: PDFDocument?
+        let document: PDFDocument
+        private let pageClassDelegate: PageClassDelegate
 
-        init(document: PDFDocument?) {
+        init(document: PDFDocument, pageClassDelegate: PageClassDelegate) {
             self.document = document
+            self.pageClassDelegate = pageClassDelegate
         }
     }
 
@@ -105,6 +141,89 @@ struct PDFViewer: NSViewRepresentable {
         }
     }
 
+    /// Parsed documents are lazy, so on-disk file size is a deliberately
+    /// conservative memory-cost proxy. This retains at most a few recent
+    /// papers and lets `NSCache` discard them earlier under memory pressure.
+    private final class DocumentMemoryCache: @unchecked Sendable {
+        static let shared = DocumentMemoryCache()
+        static let totalCostLimit = 512 * 1_024 * 1_024
+        static let countLimit = 3
+
+        private let cache = NSCache<NSString, PreparedDocument>()
+
+        private init() {
+            cache.totalCostLimit = Self.totalCostLimit
+            cache.countLimit = Self.countLimit
+            cache.name = "Glean parsed PDF documents"
+        }
+
+        func document(
+            for descriptor: PDFFileCacheDescriptor,
+            darkMode: Bool
+        ) -> PreparedDocument? {
+            cache.object(forKey: key(for: descriptor, darkMode: darkMode))
+        }
+
+        func insert(
+            _ document: PreparedDocument,
+            for descriptor: PDFFileCacheDescriptor,
+            darkMode: Bool
+        ) {
+            guard descriptor.estimatedCost <= Self.totalCostLimit else { return }
+            cache.setObject(
+                document,
+                forKey: key(for: descriptor, darkMode: darkMode),
+                cost: descriptor.estimatedCost
+            )
+        }
+
+        private func key(
+            for descriptor: PDFFileCacheDescriptor,
+            darkMode: Bool
+        ) -> NSString {
+            "\(descriptor.identity)|dark:\(darkMode)" as NSString
+        }
+    }
+
+    /// PDFKit document parsing is synchronous and can take hundreds of
+    /// milliseconds for large books. Keeping cache misses on one background
+    /// actor means rapid selection never fans out into simultaneous parses.
+    private actor DocumentPreparer {
+        static let shared = DocumentPreparer()
+
+        func prepare(
+            url: URL,
+            darkMode: Bool,
+            descriptor: PDFFileCacheDescriptor
+        ) -> PreparedDocument? {
+            if let cached = DocumentMemoryCache.shared.document(
+                for: descriptor,
+                darkMode: darkMode
+            ) {
+                return cached
+            }
+            guard !Task.isCancelled else { return nil }
+
+            let pageClassDelegate = PageClassDelegate(darkMode: darkMode)
+            guard let document = PDFDocument(url: url) else { return nil }
+            document.delegate = pageClassDelegate
+            let prepared = PreparedDocument(
+                document: document,
+                pageClassDelegate: pageClassDelegate
+            )
+
+            // Parsing cannot be interrupted once PDFKit starts. Preserve a
+            // completed result even if its original selection was superseded;
+            // revisiting that paper can then be immediate.
+            DocumentMemoryCache.shared.insert(
+                prepared,
+                for: descriptor,
+                darkMode: darkMode
+            )
+            return prepared
+        }
+    }
+
     @MainActor
     final class Coordinator: NSObject {
         static let selectionDebounce = Duration.milliseconds(120)
@@ -113,7 +232,6 @@ struct PDFViewer: NSViewRepresentable {
         private(set) var requestedDarkMode = false
         private var requestGeneration = 0
         private var loadTask: Task<Void, Never>?
-        private var pageClassDelegate: PageClassDelegate?
 
         func load(url: URL?, darkMode: Bool, in splitView: PDFThumbnailSplitView) {
             let previousURL = requestedURL
@@ -142,11 +260,21 @@ struct PDFViewer: NSViewRepresentable {
                 return
             }
 
+            let descriptor = PDFFileCacheDescriptor(url: url)
+            if let cached = DocumentMemoryCache.shared.document(
+                for: descriptor,
+                darkMode: darkMode
+            ) {
+                splitView.setDocument(cached.document)
+                splitView.setLoading(false)
+                restorePageIfNeeded(restorePageIndex, in: cached.document, splitView: splitView)
+                return
+            }
+
             // Remove the previous document immediately so PDFKit is not still
             // drawing it while a different selection is being prepared.
             if previousURL != url {
                 splitView.setDocument(nil)
-                pageClassDelegate = nil
             }
             splitView.setLoading(true)
 
@@ -158,7 +286,11 @@ struct PDFViewer: NSViewRepresentable {
                 }
                 guard !Task.isCancelled else { return }
 
-                let prepared = await DocumentPreparer.shared.prepare(url: url)
+                let prepared = await DocumentPreparer.shared.prepare(
+                    url: url,
+                    darkMode: darkMode,
+                    descriptor: descriptor
+                )
                 guard let self, let splitView,
                       !Task.isCancelled,
                       self.requestGeneration == generation,
@@ -166,29 +298,36 @@ struct PDFViewer: NSViewRepresentable {
                       self.requestedDarkMode == darkMode
                 else { return }
 
-                guard let document = prepared?.document else {
+                guard let prepared else {
                     splitView.setLoading(false)
                     return
                 }
-                let pageClassDelegate = PageClassDelegate(darkMode: darkMode)
-                document.delegate = pageClassDelegate
-                self.pageClassDelegate = pageClassDelegate
-                splitView.setDocument(document)
+                splitView.setDocument(prepared.document)
                 splitView.setLoading(false)
-
-                if let restorePageIndex,
-                   restorePageIndex >= 0,
-                   let page = document.page(at: restorePageIndex) {
-                    splitView.pdfView.go(to: page)
-                }
+                self.restorePageIfNeeded(
+                    restorePageIndex,
+                    in: prepared.document,
+                    splitView: splitView
+                )
             }
+        }
+
+        private func restorePageIfNeeded(
+            _ pageIndex: Int?,
+            in document: PDFDocument,
+            splitView: PDFThumbnailSplitView
+        ) {
+            guard let pageIndex,
+                  pageIndex >= 0,
+                  let page = document.page(at: pageIndex)
+            else { return }
+            splitView.pdfView.go(to: page)
         }
 
         func cancelLoading() {
             requestGeneration &+= 1
             loadTask?.cancel()
             loadTask = nil
-            pageClassDelegate = nil
         }
     }
 }
@@ -208,6 +347,7 @@ final class PDFThumbnailSplitView: NSView, NSSplitViewDelegate {
     private var thumbnailDarkMode: Bool?
 
     private(set) var isThumbnailSidebarVisible = true
+    private(set) var isLoading = false
 
     init(
         pdfView: PDFView = PDFView(),
@@ -247,6 +387,7 @@ final class PDFThumbnailSplitView: NSView, NSSplitViewDelegate {
     }
 
     func setLoading(_ loading: Bool) {
+        isLoading = loading
         loadingIndicator.isHidden = !loading
         if loading {
             loadingIndicator.startAnimation(nil)
@@ -413,6 +554,7 @@ final class PDFThumbnailSidebarView: NSScrollView {
     private var lastDisplayedThumbnailWidth: CGFloat = 0
     private var lastRenderedThumbnailWidth: CGFloat = 0
     private weak var thumbnailDocument: PDFDocument?
+    private var thumbnailCacheNamespace = ""
     private var thumbnailItemLoadTask: Task<Void, Never>?
     private var nextDeferredItemIndex: Int?
     private var nextDeferredRenderIndex: Int?
@@ -449,6 +591,7 @@ final class PDFThumbnailSidebarView: NSScrollView {
         thumbnailItems.removeAll()
 
         guard let document = pdfView?.document else {
+            thumbnailCacheNamespace = ""
             lastDisplayedThumbnailWidth = 0
             lastRenderedThumbnailWidth = 0
             return
@@ -457,6 +600,11 @@ final class PDFThumbnailSidebarView: NSScrollView {
         lastDisplayedThumbnailWidth = thumbnailWidth
         lastRenderedThumbnailWidth = thumbnailWidth
         thumbnailDocument = document
+        if let documentURL = document.documentURL {
+            thumbnailCacheNamespace = PDFFileCacheDescriptor(url: documentURL).identity
+        } else {
+            thumbnailCacheNamespace = "memory:\(ObjectIdentifier(document).hashValue)"
+        }
         appendThumbnailItems(
             for: document,
             range: 0..<min(Self.initialSynchronousItemCount, document.pageCount),
@@ -483,14 +631,18 @@ final class PDFThumbnailSidebarView: NSScrollView {
             let item = PDFThumbnailItemView(
                 page: page,
                 pageIndex: index,
-                thumbnailSize: thumbnailDisplaySize(for: page, width: thumbnailWidth)
+                thumbnailSize: thumbnailDisplaySize(for: page, width: thumbnailWidth),
+                cacheNamespace: thumbnailCacheNamespace
             )
             item.target = self
             item.action = #selector(selectThumbnail(_:))
             item.isSelected = page === selectedPage
             thumbnailItems.append(item)
             stackView.addArrangedSubview(item)
-            if scheduleFirstRender && index == 0 {
+            let restoredCachedThumbnail = item.applyCachedThumbnailIfAvailable(
+                renderScale: renderScale
+            )
+            if scheduleFirstRender && index == 0 && !restoredCachedThumbnail {
                 item.scheduleThumbnailRender(renderScale: renderScale)
             }
         }
@@ -739,6 +891,7 @@ final class PDFThumbnailItemView: NSControl {
     private let imageView = NSImageView()
     private let label = NSTextField(labelWithString: "")
     private var thumbnailSize: CGSize
+    private let cacheNamespace: String
     private var widthConstraint: NSLayoutConstraint?
     private var heightConstraint: NSLayoutConstraint?
     private var imageWidthConstraint: NSLayoutConstraint?
@@ -749,11 +902,13 @@ final class PDFThumbnailItemView: NSControl {
     init(
         page: PDFPage,
         pageIndex: Int,
-        thumbnailSize: CGSize
+        thumbnailSize: CGSize,
+        cacheNamespace: String
     ) {
         self.page = page
         self.pageIndex = pageIndex
         self.thumbnailSize = thumbnailSize
+        self.cacheNamespace = cacheNamespace
         super.init(frame: NSRect(
             x: 0,
             y: 0,
@@ -802,11 +957,13 @@ final class PDFThumbnailItemView: NSControl {
         renderTask?.cancel()
         hasRenderedThumbnail = false
 
-        let request = PDFThumbnailRenderRequest(
-            page: page,
-            displaySize: thumbnailSize,
-            renderScale: renderScale
-        )
+        let request = makeRenderRequest(renderScale: renderScale)
+        if let cachedImage = PDFThumbnailMemoryCache.shared.image(for: request.cacheKey) {
+            imageView.image = cachedImage
+            hasRenderedThumbnail = true
+            completion?()
+            return
+        }
         renderTask = Task { @MainActor [weak self] in
             let result = await PDFThumbnailRenderQueue.shared.render(request)
             guard let self,
@@ -818,6 +975,45 @@ final class PDFThumbnailItemView: NSControl {
             self.hasRenderedThumbnail = true
             completion?()
         }
+    }
+
+    @discardableResult
+    func applyCachedThumbnailIfAvailable(renderScale: CGFloat) -> Bool {
+        let request = makeRenderRequest(renderScale: renderScale)
+        guard let cachedImage = PDFThumbnailMemoryCache.shared.image(for: request.cacheKey) else {
+            return false
+        }
+        imageView.image = cachedImage
+        hasRenderedThumbnail = true
+        return true
+    }
+
+    private func makeRenderRequest(renderScale: CGFloat) -> PDFThumbnailRenderRequest {
+        let pixelWidth = max(1, Int(ceil(thumbnailSize.width * renderScale)))
+        let pixelHeight = max(1, Int(ceil(thumbnailSize.height * renderScale)))
+        let cacheWidth = Self.cacheDimension(for: pixelWidth)
+        let cacheHeight = Self.cacheDimension(for: pixelHeight)
+        let cacheKey = [
+            cacheNamespace,
+            String(reflecting: type(of: page)),
+            String(pageIndex),
+            "\(cacheWidth)x\(cacheHeight)"
+        ].joined(separator: "|")
+        return PDFThumbnailRenderRequest(
+            page: page,
+            displaySize: thumbnailSize,
+            renderScale: renderScale,
+            cacheKey: cacheKey,
+            pixelCost: pixelWidth * pixelHeight * 4
+        )
+    }
+
+    /// Divider layout can vary by a fraction of a point between otherwise
+    /// identical visits. Eight-pixel buckets avoid discarding a perfectly
+    /// sharp cached thumbnail because of a one-pixel rounding difference.
+    private static func cacheDimension(for pixels: Int) -> Int {
+        let bucketSize = 8
+        return max(bucketSize, ((pixels + bucketSize / 2) / bucketSize) * bucketSize)
     }
 
     private func configureViews(thumbnailSize: CGSize) {
@@ -881,11 +1077,21 @@ private final class PDFThumbnailRenderRequest: @unchecked Sendable {
     let page: PDFPage
     let displaySize: CGSize
     let renderScale: CGFloat
+    let cacheKey: String
+    let pixelCost: Int
 
-    init(page: PDFPage, displaySize: CGSize, renderScale: CGFloat) {
+    init(
+        page: PDFPage,
+        displaySize: CGSize,
+        renderScale: CGFloat,
+        cacheKey: String,
+        pixelCost: Int
+    ) {
         self.page = page
         self.displaySize = displaySize
         self.renderScale = renderScale
+        self.cacheKey = cacheKey
+        self.pixelCost = pixelCost
     }
 }
 
@@ -904,6 +1110,9 @@ private actor PDFThumbnailRenderQueue {
     static let shared = PDFThumbnailRenderQueue()
 
     func render(_ request: PDFThumbnailRenderRequest) -> PDFThumbnailRenderResult? {
+        if let cached = PDFThumbnailMemoryCache.shared.image(for: request.cacheKey) {
+            return PDFThumbnailRenderResult(image: cached)
+        }
         guard !Task.isCancelled else { return nil }
         let image = PDFThumbnailRasterizer.thumbnail(
             page: request.page,
@@ -912,6 +1121,11 @@ private actor PDFThumbnailRenderQueue {
             renderScale: request.renderScale
         ) ?? request.page.thumbnail(of: request.displaySize, for: .cropBox)
         guard !Task.isCancelled else { return nil }
+        PDFThumbnailMemoryCache.shared.insert(
+            image,
+            for: request.cacheKey,
+            cost: request.pixelCost
+        )
         return PDFThumbnailRenderResult(image: image)
     }
 }

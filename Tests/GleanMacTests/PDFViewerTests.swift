@@ -81,6 +81,58 @@ final class PDFViewerTests: XCTestCase {
     }
 
     @MainActor
+    func testRevisitingRecentPDFUsesCachedDocumentWithoutDebounce() async throws {
+        let url = try makeImplicitBackgroundPDF()
+        let view = PDFThumbnailSplitView(configuration: .previewLike)
+        let coordinator = PDFViewer.Coordinator()
+
+        coordinator.load(url: url, darkMode: false, in: view)
+        XCTAssertTrue(view.isLoading)
+        let firstDocument = try await waitForDocument(in: view)
+
+        coordinator.load(url: nil, darkMode: false, in: view)
+        XCTAssertNil(view.pdfView.document)
+
+        let cachedLoadStart = ContinuousClock.now
+        coordinator.load(url: url, darkMode: false, in: view)
+        let cachedLoadDuration = cachedLoadStart.duration(to: .now)
+
+        XCTAssertIdentical(
+            view.pdfView.document,
+            firstDocument,
+            "A recent PDF should be restored synchronously from Glean's cache."
+        )
+        XCTAssertFalse(view.isLoading)
+        XCTAssertLessThan(
+            cachedLoadDuration,
+            .milliseconds(50),
+            "A cached paper selection should stay below the local-control interaction budget."
+        )
+    }
+
+    @MainActor
+    func testPDFDocumentCacheInvalidatesWhenFileChanges() async throws {
+        let url = try makeImplicitBackgroundPDF()
+        let view = PDFThumbnailSplitView(configuration: .previewLike)
+        let coordinator = PDFViewer.Coordinator()
+
+        coordinator.load(url: url, darkMode: false, in: view)
+        let firstDocument = try await waitForDocument(in: view)
+        XCTAssertEqual(firstDocument.pageCount, 1)
+        coordinator.load(url: nil, darkMode: false, in: view)
+
+        let replacementURL = try makeMultipageImplicitBackgroundPDF(pageCount: 2)
+        try Data(contentsOf: replacementURL).write(to: url, options: .atomic)
+        coordinator.load(url: url, darkMode: false, in: view)
+
+        XCTAssertNil(view.pdfView.document)
+        XCTAssertTrue(view.isLoading)
+        let replacementDocument = try await waitForDocument(in: view)
+        XCTAssertNotIdentical(replacementDocument, firstDocument)
+        XCTAssertEqual(replacementDocument.pageCount, 2)
+    }
+
+    @MainActor
     func testThumbnailSplitViewAppliesPDFBackgroundOnlyToMainPDFView() {
         let view = PDFThumbnailSplitView(configuration: .previewLike)
         let color = NSColor(calibratedWhite: 0.2, alpha: 1.0)
@@ -263,6 +315,42 @@ final class PDFViewerTests: XCTestCase {
     }
 
     @MainActor
+    func testRevisitingPDFRestoresRenderedThumbnailWithoutRedrawingPage() async throws {
+        CountingPDFPage.drawCount = 0
+        let url = try makeImplicitBackgroundPDF()
+        let firstDelegate = CountingPageDelegate()
+        let firstDocument = try XCTUnwrap(PDFDocument(url: url))
+        firstDocument.delegate = firstDelegate
+        let view = PDFThumbnailSplitView(configuration: .previewLike)
+        view.frame = NSRect(x: 0, y: 0, width: 500, height: 500)
+
+        view.setDocument(firstDocument)
+        view.layoutSubtreeIfNeeded()
+        let firstItem = try XCTUnwrap(view.thumbnailView.thumbnailItems.first)
+        for _ in 0..<100 where !firstItem.hasRenderedThumbnail {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertTrue(firstItem.hasRenderedThumbnail)
+        let firstDrawCount = CountingPDFPage.drawCount
+        XCTAssertGreaterThan(firstDrawCount, 0)
+        XCTAssertTrue(firstItem.applyCachedThumbnailIfAvailable(renderScale: 2))
+
+        view.setDocument(nil)
+        let secondDelegate = CountingPageDelegate()
+        let secondDocument = try XCTUnwrap(PDFDocument(url: url))
+        secondDocument.delegate = secondDelegate
+        view.setDocument(secondDocument)
+        view.layoutSubtreeIfNeeded()
+
+        let restoredItem = try XCTUnwrap(view.thumbnailView.thumbnailItems.first)
+        XCTAssertTrue(
+            restoredItem.hasRenderedThumbnail,
+            "A rendered thumbnail should be restored during item construction."
+        )
+        XCTAssertEqual(CountingPDFPage.drawCount, firstDrawCount)
+    }
+
+    @MainActor
     func testThumbnailSidebarCancelsPendingPageConstructionWhenDocumentChanges() async throws {
         let firstURL = try makeMultipageImplicitBackgroundPDF(pageCount: 40)
         let secondURL = try makeMultipageImplicitBackgroundPDF(pageCount: 2)
@@ -376,6 +464,20 @@ final class PDFViewerTests: XCTestCase {
         context.closePDF()
 
         return url
+    }
+
+    @MainActor
+    private func waitForDocument(
+        in view: PDFThumbnailSplitView,
+        attempts: Int = 200
+    ) async throws -> PDFDocument {
+        for _ in 0..<attempts {
+            if let document = view.pdfView.document {
+                return document
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        return try XCTUnwrap(view.pdfView.document, "Timed out waiting for PDF preparation.")
     }
 
     private func averageGray(in image: NSImage, rect: CGRect) throws -> CGFloat {
