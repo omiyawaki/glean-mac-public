@@ -57,7 +57,6 @@ struct LibraryView: View {
                     libraryList(
                         rows: listState.allRows,
                         chronology: listState.allChronology,
-                        destinationPositions: listState.allDestinationPositions,
                         identity: "library-all",
                         isHidden: isFiltering,
                         scrollController: allScrollController,
@@ -66,7 +65,6 @@ struct LibraryView: View {
                     libraryList(
                         rows: listState.filteredRows,
                         chronology: listState.filteredChronology,
-                        destinationPositions: listState.filteredDestinationPositions,
                         identity: "library-filtered",
                         isHidden: !isFiltering,
                         scrollController: filteredScrollController,
@@ -93,7 +91,6 @@ struct LibraryView: View {
     private func libraryList(
         rows: [LibraryListRow],
         chronology: [LibraryChronology.Marker],
-        destinationPositions: [String: Double],
         identity: String,
         isHidden: Bool,
         scrollController: IndexedNativeScrollController,
@@ -122,7 +119,7 @@ struct LibraryView: View {
                     case .paper(let entry):
                         VStack(alignment: .leading, spacing: 0) {
                             LibraryRow(entry: entry,
-                                       loadedRecord: loadedRecord,
+                                       loadedRecord: matchingLoadedRecord(for: entry),
                                        showRelations: showRelations,
                                        reportActionError: { message in
                                            actionErrorMessage = message
@@ -215,16 +212,6 @@ struct LibraryView: View {
                 .padding(.trailing, 22)
             }
         }
-        .onChange(of: selection) { _, citekey in
-            guard let citekey,
-                  let position = destinationPositions[citekey] else { return }
-            jump(
-                to: position,
-                scrollController: scrollController,
-                railJumpStarted: railJumpStarted,
-                measureResponse: false
-            )
-        }
         .animation(nil, value: rows)
         .id(identity)
         .opacity(isHidden ? 0 : 1)
@@ -246,6 +233,10 @@ struct LibraryView: View {
             libraryRailLog.error("native rail scroll target unavailable")
             return
         }
+    }
+
+    private func matchingLoadedRecord(for entry: LibraryEntry) -> LibraryRecord? {
+        loadedRecord?.citekey == entry.citekey ? loadedRecord : nil
     }
 
     @discardableResult
