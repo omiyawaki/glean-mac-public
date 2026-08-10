@@ -453,6 +453,7 @@ private final class PDFWarmPreviewView: NSView {
     var frameSource: LibraryPDFLatencyTracker.FrameSource?
     var backgroundColor: NSColor = .clear
     var onFirstDraw: ((URL, LibraryPDFLatencyTracker.FrameSource, ContinuousClock.Instant) -> Void)?
+    private var targetPageRect: NSRect?
 
     private(set) var reportedCurrentImage = false
 
@@ -468,6 +469,7 @@ private final class PDFWarmPreviewView: NSView {
         self.image = image
         self.documentURL = documentURL
         self.frameSource = frameSource
+        targetPageRect = nil
         reportedCurrentImage = false
         isHidden = false
         needsDisplay = true
@@ -477,6 +479,7 @@ private final class PDFWarmPreviewView: NSView {
         image = nil
         self.documentURL = documentURL
         frameSource = nil
+        targetPageRect = nil
         reportedCurrentImage = false
         isHidden = false
         needsDisplay = true
@@ -487,7 +490,19 @@ private final class PDFWarmPreviewView: NSView {
         image = nil
         documentURL = nil
         frameSource = nil
+        targetPageRect = nil
         reportedCurrentImage = false
+    }
+
+    func alignImage(to pageRect: NSRect?) {
+        guard targetPageRect != pageRect else { return }
+        targetPageRect = pageRect
+        needsDisplay = true
+    }
+
+    var currentImageRect: NSRect? {
+        guard image != nil else { return nil }
+        return imageRect()
     }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
@@ -499,19 +514,7 @@ private final class PDFWarmPreviewView: NSView {
         dirtyRect.fill()
         guard let image else { return }
 
-        let horizontalInset: CGFloat = 10
-        let availableWidth = max(1, bounds.width - horizontalInset * 2)
-        let scale = availableWidth / max(1, image.size.width)
-        let targetSize = CGSize(
-            width: availableWidth,
-            height: image.size.height * scale
-        )
-        let targetRect = NSRect(
-            x: horizontalInset,
-            y: bounds.maxY - targetSize.height - 8,
-            width: targetSize.width,
-            height: targetSize.height
-        )
+        let targetRect = imageRect()
         image.draw(
             in: targetRect,
             from: .zero,
@@ -525,6 +528,28 @@ private final class PDFWarmPreviewView: NSView {
             reportedCurrentImage = true
             onFirstDraw?(documentURL, frameSource, .now)
         }
+    }
+
+    private func imageRect() -> NSRect {
+        if let targetPageRect,
+           targetPageRect.width > 0,
+           targetPageRect.height > 0 {
+            return targetPageRect
+        }
+        guard let image else { return .zero }
+        let horizontalInset: CGFloat = 10
+        let availableWidth = max(1, bounds.width - horizontalInset * 2)
+        let scale = availableWidth / max(1, image.size.width)
+        let targetSize = CGSize(
+            width: availableWidth,
+            height: image.size.height * scale
+        )
+        return NSRect(
+            x: horizontalInset,
+            y: bounds.maxY - targetSize.height - 8,
+            width: targetSize.width,
+            height: targetSize.height
+        )
     }
 }
 
@@ -797,7 +822,12 @@ struct PDFViewer: NSViewRepresentable {
                     ? .cachedPreview
                     : (darkMode ? .darkTransition : nil)
             )
-            splitView.displayTransitionCoverIfNeeded()
+            // A memory-warm document can establish PDFKit's exact page frame
+            // synchronously. Defer that preview's first draw until after the
+            // cached document is assigned so the cover never changes size.
+            if !hasWarmPreview {
+                splitView.displayTransitionCoverIfNeeded()
+            }
             if let cached = DocumentMemoryCache.shared.document(
                 for: descriptor,
                 darkMode: darkMode
@@ -811,13 +841,14 @@ struct PDFViewer: NSViewRepresentable {
                     in: cached.document,
                     splitView: splitView
                 )
+                splitView.displayTransitionCoverIfNeeded()
                 return
             }
 
             // Remove the previous document immediately so PDFKit is not still
             // drawing it while a different selection is being prepared.
             if previousURL != url {
-                splitView.setDocument(nil)
+                splitView.setDocument(nil, preservingThumbnails: true)
             }
             splitView.setLoading(true)
 
@@ -883,7 +914,8 @@ struct PDFViewer: NSViewRepresentable {
                         url: url,
                         descriptor: descriptor,
                         darkMode: darkMode,
-                        frameSource: .preparedPreview
+                        frameSource: .preparedPreview,
+                        displayImmediately: false
                     )
                     if !url.path.hasPrefix(
                         FileManager.default.temporaryDirectory.path
@@ -909,6 +941,7 @@ struct PDFViewer: NSViewRepresentable {
                     in: prepared.document,
                     splitView: splitView
                 )
+                splitView.displayTransitionCoverIfNeeded()
             }
         }
 
@@ -922,6 +955,7 @@ struct PDFViewer: NSViewRepresentable {
                   let page = document.page(at: pageIndex)
             else { return }
             splitView.pdfView.go(to: page)
+            splitView.alignTransitionCoverToCurrentPage()
         }
 
         func cancelLoading() {
@@ -964,6 +998,9 @@ final class PDFThumbnailSplitView: NSView, NSSplitViewDelegate {
         warmPreviewView.frameSource
     }
     var transitionCoverBackgroundColor: NSColor { warmPreviewView.backgroundColor }
+    var transitionCoverImageRect: NSRect? { warmPreviewView.currentImageRect }
+    var loadingIndicatorStyle: NSProgressIndicator.Style { loadingIndicator.style }
+    var loadingIndicatorIsIndeterminate: Bool { loadingIndicator.isIndeterminate }
 
     init(
         pdfView: PDFView = PDFView(),
@@ -1009,9 +1046,16 @@ final class PDFThumbnailSplitView: NSView, NSSplitViewDelegate {
         }
     }
 
-    func setDocument(_ document: PDFDocument?) {
+    func setDocument(
+        _ document: PDFDocument?,
+        preservingThumbnails: Bool = false
+    ) {
+        guard pdfView.document !== document else { return }
         pdfView.document = document
-        thumbnailView.pdfView = pdfView
+        if document != nil || !preservingThumbnails {
+            thumbnailView.reloadThumbnails()
+        }
+        alignTransitionCoverToCurrentPage()
     }
 
     @discardableResult
@@ -1062,7 +1106,8 @@ final class PDFThumbnailSplitView: NSView, NSSplitViewDelegate {
         url: URL,
         descriptor: PDFFileCacheDescriptor,
         darkMode: Bool,
-        frameSource: LibraryPDFLatencyTracker.FrameSource
+        frameSource: LibraryPDFLatencyTracker.FrameSource,
+        displayImmediately: Bool = true
     ) -> Int? {
         let key = "\(descriptor.identity)|dark:\(darkMode)"
         guard warmPreviewKey == key else { return nil }
@@ -1083,7 +1128,9 @@ final class PDFThumbnailSplitView: NSView, NSSplitViewDelegate {
         )
         latestPresentedTransitionFrameSource = frameSource
         setLoading(false)
-        displayTransitionCoverIfNeeded()
+        if displayImmediately {
+            displayTransitionCoverIfNeeded()
+        }
         return preview.pageIndex
     }
 
@@ -1105,7 +1152,46 @@ final class PDFThumbnailSplitView: NSView, NSSplitViewDelegate {
 
     func displayTransitionCoverIfNeeded() {
         guard !warmPreviewView.isHidden else { return }
+        alignTransitionCoverToCurrentPage()
         warmPreviewView.displayIfNeeded()
+    }
+
+    func alignTransitionCoverToCurrentPage() {
+        guard !warmPreviewView.isHidden,
+              warmPreviewView.image != nil,
+              let document = pdfView.document,
+              let page = pdfView.currentPage ?? document.page(at: 0)
+        else {
+            warmPreviewView.alignImage(to: nil)
+            return
+        }
+        pdfView.layoutDocumentView()
+        pdfView.layoutSubtreeIfNeeded()
+        let pageRectInPDFView = pdfView.convert(
+            page.bounds(for: .cropBox),
+            from: page
+        )
+        let pageRectInPreview = warmPreviewView.convert(
+            pageRectInPDFView,
+            from: pdfView
+        )
+        guard pageRectInPreview.width.isFinite,
+              pageRectInPreview.height.isFinite,
+              pageRectInPreview.width > 0,
+              pageRectInPreview.height > 0
+        else { return }
+        warmPreviewView.alignImage(to: pageRectInPreview)
+    }
+
+    var currentPDFPageRectInTransitionCover: NSRect? {
+        guard let document = pdfView.document,
+              let page = pdfView.currentPage ?? document.page(at: 0)
+        else { return nil }
+        let pageRectInPDFView = pdfView.convert(
+            page.bounds(for: .cropBox),
+            from: page
+        )
+        return warmPreviewView.convert(pageRectInPDFView, from: pdfView)
     }
 
     func setLoading(_ loading: Bool) {
@@ -1185,8 +1271,9 @@ final class PDFThumbnailSplitView: NSView, NSSplitViewDelegate {
         thumbnailBackgroundView.blendingMode = .withinWindow
         thumbnailBackgroundView.state = .active
 
-        loadingIndicator.style = .spinning
-        loadingIndicator.controlSize = .large
+        loadingIndicator.style = .bar
+        loadingIndicator.controlSize = .small
+        loadingIndicator.isIndeterminate = true
         loadingIndicator.isDisplayedWhenStopped = false
         loadingIndicator.isHidden = true
         warmPreviewView.isHidden = true
@@ -1229,6 +1316,7 @@ final class PDFThumbnailSplitView: NSView, NSSplitViewDelegate {
 
             loadingIndicator.centerXAnchor.constraint(equalTo: mainPane.centerXAnchor),
             loadingIndicator.centerYAnchor.constraint(equalTo: mainPane.centerYAnchor),
+            loadingIndicator.widthAnchor.constraint(equalToConstant: 180),
 
             thumbnailBackgroundView.leadingAnchor.constraint(equalTo: thumbnailPane.leadingAnchor),
             thumbnailBackgroundView.trailingAnchor.constraint(equalTo: thumbnailPane.trailingAnchor),
@@ -1341,6 +1429,11 @@ final class PDFThumbnailSplitView: NSView, NSSplitViewDelegate {
 }
 
 @MainActor
+private final class PDFThumbnailStackView: NSStackView {
+    override var isFlipped: Bool { true }
+}
+
+@MainActor
 final class PDFThumbnailSidebarView: NSScrollView {
     static let sidebarHorizontalMargin: CGFloat = 64
     static let initialSynchronousItemCount = 1
@@ -1349,9 +1442,8 @@ final class PDFThumbnailSidebarView: NSScrollView {
 
     weak var pdfView: PDFView? {
         didSet {
-            if oldValue !== pdfView {
-                updatePageChangeObserver()
-            }
+            guard oldValue !== pdfView else { return }
+            updatePageChangeObserver()
             reloadThumbnails()
         }
     }
@@ -1377,7 +1469,7 @@ final class PDFThumbnailSidebarView: NSScrollView {
 
     private(set) var thumbnailItems: [PDFThumbnailItemView] = []
 
-    private let stackView = NSStackView()
+    private let stackView = PDFThumbnailStackView()
     private var lastDisplayedThumbnailWidth: CGFloat = 0
     private var lastRenderedThumbnailWidth: CGFloat = 0
     private weak var thumbnailDocument: PDFDocument?
@@ -1385,6 +1477,8 @@ final class PDFThumbnailSidebarView: NSScrollView {
     private var thumbnailItemLoadTask: Task<Void, Never>?
     private var nextDeferredItemIndex: Int?
     private var nextDeferredRenderIndex: Int?
+
+    var isDocumentStackFlipped: Bool { stackView.isFlipped }
 
     override func layout() {
         super.layout()

@@ -81,6 +81,17 @@ final class PDFViewerTests: XCTestCase {
     }
 
     @MainActor
+    func testColdLoadingUsesNativeIndeterminateLinearProgress() {
+        let view = PDFThumbnailSplitView(configuration: .previewLike)
+
+        view.setLoading(true)
+
+        XCTAssertTrue(view.isLoading)
+        XCTAssertEqual(view.loadingIndicatorStyle, .bar)
+        XCTAssertTrue(view.loadingIndicatorIsIndeterminate)
+    }
+
+    @MainActor
     func testRevisitingRecentPDFUsesCachedDocumentWithoutDebounce() async throws {
         let url = try makeImplicitBackgroundPDF()
         let view = PDFThumbnailSplitView(configuration: .previewLike)
@@ -221,7 +232,7 @@ final class PDFViewerTests: XCTestCase {
             darkMode: true,
             in: view
         )
-        _ = try await waitForDocument(in: view)
+        let document = try await waitForDocument(in: view)
 
         XCTAssertEqual(
             view.latestPresentedTransitionFrameSource,
@@ -230,6 +241,11 @@ final class PDFViewerTests: XCTestCase {
         )
 
         let revisitView = PDFThumbnailSplitView(configuration: .previewLike)
+        revisitView.frame = NSRect(x: 0, y: 0, width: 800, height: 600)
+        revisitView.pdfView.autoScales = true
+        revisitView.pdfView.displayMode = .singlePageContinuous
+        revisitView.pdfView.displayDirection = .vertical
+        revisitView.layoutSubtreeIfNeeded()
         let restoredPageIndex = revisitView.prepareForDocument(
             url: url,
             descriptor: PDFFileCacheDescriptor(url: url),
@@ -240,6 +256,19 @@ final class PDFViewerTests: XCTestCase {
         XCTAssertTrue(revisitView.isTransitionCoverOpaque)
         XCTAssertTrue(revisitView.transitionCoverHasImage)
         XCTAssertEqual(revisitView.transitionCoverFrameSource, .cachedPreview)
+
+        revisitView.setDocument(document)
+        revisitView.layoutSubtreeIfNeeded()
+        revisitView.alignTransitionCoverToCurrentPage()
+
+        let coverRect = try XCTUnwrap(revisitView.transitionCoverImageRect)
+        let livePageRect = try XCTUnwrap(
+            revisitView.currentPDFPageRectInTransitionCover
+        )
+        XCTAssertEqual(coverRect.minX, livePageRect.minX, accuracy: 0.5)
+        XCTAssertEqual(coverRect.minY, livePageRect.minY, accuracy: 0.5)
+        XCTAssertEqual(coverRect.width, livePageRect.width, accuracy: 0.5)
+        XCTAssertEqual(coverRect.height, livePageRect.height, accuracy: 0.5)
     }
 
     @MainActor
@@ -424,6 +453,7 @@ final class PDFViewerTests: XCTestCase {
 
         view.setDocument(document)
         view.layoutSubtreeIfNeeded()
+        view.thumbnailView.layoutSubtreeIfNeeded()
 
         XCTAssertEqual(
             view.thumbnailView.thumbnailItems.count,
@@ -434,9 +464,13 @@ final class PDFViewerTests: XCTestCase {
             0,
             "Initial sidebar load must not rasterize any PDF page on the main actor."
         )
+        XCTAssertTrue(view.thumbnailView.isDocumentStackFlipped)
+        let firstItem = try XCTUnwrap(view.thumbnailView.thumbnailItems.first)
+        let initialFirstItemMinY = firstItem.frame.minY
 
         for _ in 0..<100 where view.thumbnailView.thumbnailItems.count < 12 {
             try await Task.sleep(for: .milliseconds(10))
+            view.thumbnailView.layoutSubtreeIfNeeded()
         }
 
         XCTAssertEqual(
@@ -444,6 +478,28 @@ final class PDFViewerTests: XCTestCase {
             12,
             "The complete thumbnail list should fill in after yielding to the run loop."
         )
+        view.thumbnailView.layoutSubtreeIfNeeded()
+        XCTAssertEqual(firstItem.frame.minY, initialFirstItemMinY, accuracy: 0.5)
+    }
+
+    @MainActor
+    func testThumbnailSidebarKeepsCurrentItemsDuringNextDocumentPreparation() throws {
+        let url = try makeMultipageImplicitBackgroundPDF(pageCount: 3)
+        let document = try XCTUnwrap(PDFDocument(url: url))
+        let view = PDFThumbnailSplitView(configuration: .previewLike)
+        view.frame = NSRect(x: 0, y: 0, width: 800, height: 500)
+
+        view.setDocument(document)
+        view.layoutSubtreeIfNeeded()
+        let existingItems = view.thumbnailView.thumbnailItems
+
+        view.setDocument(nil, preservingThumbnails: true)
+
+        XCTAssertNil(view.pdfView.document)
+        XCTAssertEqual(view.thumbnailView.thumbnailItems.count, existingItems.count)
+        for (index, item) in view.thumbnailView.thumbnailItems.enumerated() {
+            XCTAssertIdentical(item, existingItems[index])
+        }
     }
 
     @MainActor
