@@ -144,6 +144,20 @@ final class PDFViewerTests: XCTestCase {
             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
         ))
         page.draw(with: .mediaBox, to: context)
+        for _ in 0..<20 {
+            await Task.yield()
+        }
+        XCTAssertEqual(
+            tracker.sampleCount,
+            0,
+            "Offscreen bitmap and thumbnail draws are not visible PDF frames."
+        )
+
+        PDFPageDrawReporter.report(
+            page,
+            renderedRect: page.bounds(for: .mediaBox),
+            isBitmapContext: false
+        )
         for _ in 0..<20 where tracker.sampleCount == 0 {
             await Task.yield()
         }
@@ -194,6 +208,45 @@ final class PDFViewerTests: XCTestCase {
                 pageRect: CGRect(x: 12, y: 18, width: 618, height: 826)
             )
         )
+    }
+
+    func testVisibleRegionCoverageRequiresEveryExpectedPixelRegion() async throws {
+        var coverage = PDFVisibleRegionCoverage()
+        coverage.reset(expected: [
+            0: CGRect(x: 0, y: 0, width: 100, height: 100)
+        ])
+
+        coverage.record(
+            pageIndex: 0,
+            renderedRect: CGRect(x: 0, y: 0, width: 50, height: 100)
+        )
+        try await Task.sleep(for: .milliseconds(150))
+        XCTAssertFalse(coverage.isComplete)
+
+        coverage.record(
+            pageIndex: 0,
+            renderedRect: CGRect(x: 50, y: 0, width: 50, height: 45)
+        )
+        XCTAssertFalse(
+            coverage.isComplete,
+            "A bounding-box union must not mistake an uncovered gap for completion."
+        )
+
+        coverage.record(
+            pageIndex: 0,
+            renderedRect: CGRect(x: 50, y: 45, width: 50, height: 55)
+        )
+        XCTAssertTrue(coverage.isComplete)
+    }
+
+    func testDrawRegionUsesDeviceTileWhenClipReportsWholePage() {
+        let region = PDFPageDrawReporter.visibleIntersection(
+            pageBounds: CGRect(x: 0, y: 0, width: 240, height: 240),
+            clipBounds: CGRect(x: 0, y: 0, width: 240, height: 240),
+            deviceBounds: CGRect(x: 0, y: 120, width: 120, height: 120)
+        )
+
+        XCTAssertEqual(region, CGRect(x: 0, y: 120, width: 120, height: 120))
     }
 
     @MainActor
@@ -258,10 +311,20 @@ final class PDFViewerTests: XCTestCase {
         let page = try XCTUnwrap(document.page(at: 0) as? InvertedPDFPage)
         let context = try makeBitmapContext(width: 240, height: 240)
         page.draw(with: .mediaBox, to: context)
+        PDFPageDrawReporter.report(
+            page,
+            renderedRect: page.bounds(for: .mediaBox),
+            isBitmapContext: false
+        )
+        await Task.yield()
 
         // The first completed tile must not uncover PDFKit immediately.
-        await Task.yield()
         XCTAssertTrue(view.isTransitionCoverVisible)
+        try await Task.sleep(for: .milliseconds(150))
+        XCTAssertTrue(
+            view.isTransitionCoverVisible,
+            "The bridge must span PDFKit's native tile presentation interval."
+        )
 
         for _ in 0..<40 where view.isTransitionCoverVisible {
             try await Task.sleep(for: .milliseconds(10))
@@ -271,41 +334,33 @@ final class PDFViewerTests: XCTestCase {
     }
 
     @MainActor
-    func testImageBackedTransitionSurvivesDelayedPDFKitTileDraws() async throws {
+    func testLargePDFColdLoadStillPublishesPreparedDarkBridge() async throws {
         let url = try makeImplicitBackgroundPDF()
+        let handle = try FileHandle(forWritingTo: url)
+        try handle.seekToEnd()
+        try handle.write(contentsOf: Data(
+            repeating: 0,
+            count: 11 * 1_024 * 1_024
+        ))
+        try handle.close()
+        let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+        let size = try XCTUnwrap(attributes[.size] as? NSNumber).intValue
+        XCTAssertGreaterThan(size, 10 * 1_024 * 1_024)
+
         let view = PDFThumbnailSplitView(configuration: .previewLike)
         view.frame = NSRect(x: 0, y: 0, width: 800, height: 600)
         view.layoutSubtreeIfNeeded()
         let coordinator = PDFViewer.Coordinator()
 
         coordinator.load(url: url, darkMode: true, in: view)
-        let document = try await waitForDocument(in: view)
-        let page = try XCTUnwrap(document.page(at: 0) as? InvertedPDFPage)
-        let context = try makeBitmapContext(width: 240, height: 240)
-        XCTAssertTrue(
-            view.transitionCoverHasImage,
-            "The regression requires the image-backed warm transition path."
+        _ = try await waitForDocument(in: view)
+
+        XCTAssertEqual(
+            view.latestPresentedTransitionFrameSource,
+            .preparedPreview,
+            "Total file size must not force a cold load onto a background-only transition."
         )
-
-        page.draw(with: .mediaBox, to: context)
-        await Task.yield()
-        try await Task.sleep(for: .milliseconds(40))
-        XCTAssertTrue(
-            view.isTransitionCoverVisible,
-            "A complex PDF can pause longer than 24 ms between native tile draws."
-        )
-
-        // A later tile must restart the same quiescence window rather than
-        // exposing PDFKit between draws.
-        page.draw(with: .mediaBox, to: context)
-        await Task.yield()
-        try await Task.sleep(for: .milliseconds(40))
-        XCTAssertTrue(view.isTransitionCoverVisible)
-
-        for _ in 0..<20 where view.isTransitionCoverVisible {
-            try await Task.sleep(for: .milliseconds(10))
-        }
-        XCTAssertFalse(view.isTransitionCoverVisible)
+        XCTAssertTrue(view.transitionCoverHasImage)
     }
 
     @MainActor

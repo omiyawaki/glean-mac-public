@@ -247,14 +247,212 @@ private enum PDFThumbnailRenderingContext {
     }
 }
 
-private enum PDFPageDrawReporter {
+struct PDFVisibleRegionCoverage {
+    private static let edgeTolerance: CGFloat = 0.75
+    private static let remainingAreaTolerance: CGFloat = 1
+
+    private(set) var expected: [Int: CGRect] = [:]
+    private var rendered: [Int: [CGRect]] = [:]
+    private(set) var generation = 0
+
+    var isComplete: Bool {
+        !expected.isEmpty && expected.allSatisfy { pageID, target in
+            Self.isCovered(target, by: rendered[pageID] ?? [])
+        }
+    }
+
+    mutating func reset(expected newExpected: [Int: CGRect]) {
+        expected = newExpected.filter { _, rect in Self.isUsable(rect) }
+        rendered.removeAll(keepingCapacity: true)
+        generation &+= 1
+    }
+
+    @discardableResult
+    mutating func updateExpected(
+        _ newExpected: [Int: CGRect]
+    ) -> Bool {
+        let usable = newExpected.filter { _, rect in Self.isUsable(rect) }
+        guard !Self.matches(expected, usable) else { return false }
+        reset(expected: usable)
+        return true
+    }
+
+    mutating func record(pageIndex: Int, renderedRect: CGRect) {
+        guard let target = expected[pageIndex],
+              Self.isUsable(renderedRect)
+        else { return }
+        let clipped = renderedRect.standardized.intersection(target)
+        guard Self.isUsable(clipped) else { return }
+        rendered[pageIndex, default: []].append(clipped)
+    }
+
+    private static func matches(
+        _ lhs: [Int: CGRect],
+        _ rhs: [Int: CGRect]
+    ) -> Bool {
+        guard lhs.keys == rhs.keys else { return false }
+        return lhs.allSatisfy { pageIndex, rect in
+            guard let other = rhs[pageIndex] else { return false }
+            return abs(rect.minX - other.minX) <= edgeTolerance
+                && abs(rect.minY - other.minY) <= edgeTolerance
+                && abs(rect.maxX - other.maxX) <= edgeTolerance
+                && abs(rect.maxY - other.maxY) <= edgeTolerance
+        }
+    }
+
+    private static func isCovered(_ target: CGRect, by covers: [CGRect]) -> Bool {
+        var remaining = [target.standardized]
+        for cover in covers where !remaining.isEmpty {
+            let expanded = cover.standardized.insetBy(
+                dx: -edgeTolerance,
+                dy: -edgeTolerance
+            )
+            remaining = remaining.flatMap { subtract(expanded, from: $0) }
+        }
+        let remainingArea = remaining.reduce(CGFloat.zero) {
+            $0 + $1.width * $1.height
+        }
+        return remainingArea <= remainingAreaTolerance
+    }
+
+    private static func subtract(_ cover: CGRect, from target: CGRect) -> [CGRect] {
+        let intersection = target.intersection(cover)
+        guard isUsable(intersection) else { return [target] }
+
+        var pieces: [CGRect] = []
+        if intersection.minX > target.minX {
+            pieces.append(CGRect(
+                x: target.minX,
+                y: target.minY,
+                width: intersection.minX - target.minX,
+                height: target.height
+            ))
+        }
+        if intersection.maxX < target.maxX {
+            pieces.append(CGRect(
+                x: intersection.maxX,
+                y: target.minY,
+                width: target.maxX - intersection.maxX,
+                height: target.height
+            ))
+        }
+        let middleMinX = max(target.minX, intersection.minX)
+        let middleMaxX = min(target.maxX, intersection.maxX)
+        if intersection.minY > target.minY {
+            pieces.append(CGRect(
+                x: middleMinX,
+                y: target.minY,
+                width: middleMaxX - middleMinX,
+                height: intersection.minY - target.minY
+            ))
+        }
+        if intersection.maxY < target.maxY {
+            pieces.append(CGRect(
+                x: middleMinX,
+                y: intersection.maxY,
+                width: middleMaxX - middleMinX,
+                height: target.maxY - intersection.maxY
+            ))
+        }
+        return pieces.filter(isUsable)
+    }
+
+    private static func isUsable(_ rect: CGRect) -> Bool {
+        let rect = rect.standardized
+        return !rect.isNull
+            && !rect.isInfinite
+            && rect.minX.isFinite
+            && rect.minY.isFinite
+            && rect.maxX.isFinite
+            && rect.maxY.isFinite
+            && rect.width > 0
+            && rect.height > 0
+    }
+}
+
+private final class PDFPageDrawEvent: @unchecked Sendable {
+    let documentURL: URL
+    let pageIndex: Int
+    let renderedRect: CGRect
+
+    init(documentURL: URL, pageIndex: Int, renderedRect: CGRect) {
+        self.documentURL = documentURL
+        self.pageIndex = pageIndex
+        self.renderedRect = renderedRect
+    }
+}
+
+enum PDFPageDrawReporter {
     static let notification = Notification.Name("GleanPDFPageDidDraw")
 
-    static func report(_ page: PDFPage) {
+    static func renderedRect(
+        for page: PDFPage,
+        box: PDFDisplayBox,
+        in context: CGContext
+    ) -> CGRect {
+        let pageBounds = page.bounds(for: box).standardized
+        let clip = context.boundingBoxOfClipPath.standardized
+        let deviceBounds = context.convertToUserSpace(CGRect(
+            x: 0,
+            y: 0,
+            width: context.width,
+            height: context.height
+        )).standardized
+        return visibleIntersection(
+            pageBounds: pageBounds,
+            clipBounds: clip,
+            deviceBounds: context.width > 0 && context.height > 0
+                ? deviceBounds
+                : .null
+        )
+    }
+
+    static func visibleIntersection(
+        pageBounds: CGRect,
+        clipBounds: CGRect,
+        deviceBounds: CGRect
+    ) -> CGRect {
+        let pageBounds = pageBounds.standardized
+        let clipBounds = clipBounds.standardized
+        let deviceBounds = deviceBounds.standardized
+        let finiteClip = !clipBounds.isInfinite
+            && clipBounds.minX.isFinite
+            && clipBounds.minY.isFinite
+            && clipBounds.maxX.isFinite
+            && clipBounds.maxY.isFinite
+        let clippedPage = finiteClip
+            ? clipBounds.intersection(pageBounds)
+            : pageBounds
+        let usableDeviceBounds = !deviceBounds.isNull
+            && !deviceBounds.isInfinite
+            && deviceBounds.minX.isFinite
+            && deviceBounds.minY.isFinite
+            && deviceBounds.maxX.isFinite
+            && deviceBounds.maxY.isFinite
+            && deviceBounds.width > 0
+            && deviceBounds.height > 0
+        guard usableDeviceBounds else { return clippedPage }
+        return clippedPage.intersection(deviceBounds)
+    }
+
+    static func report(
+        _ page: PDFPage,
+        renderedRect: CGRect,
+        isBitmapContext: Bool
+    ) {
         guard !PDFThumbnailRenderingContext.isRendering,
-              let documentURL = page.document?.documentURL
+              !isBitmapContext,
+              let document = page.document,
+              let documentURL = document.documentURL
         else { return }
+        let pageIndex = document.index(for: page)
+        guard pageIndex != NSNotFound else { return }
         let finishedAt = ContinuousClock.now
+        let event = PDFPageDrawEvent(
+            documentURL: documentURL,
+            pageIndex: pageIndex,
+            renderedRect: renderedRect
+        )
         Task { @MainActor in
             LibraryPDFLatencyTracker.shared.recordFirstPageDraw(
                 documentURL: documentURL,
@@ -263,7 +461,7 @@ private enum PDFPageDrawReporter {
             NotificationCenter.default.post(
                 name: notification,
                 object: nil,
-                userInfo: ["documentURL": documentURL]
+                userInfo: ["event": event]
             )
         }
     }
@@ -271,8 +469,17 @@ private enum PDFPageDrawReporter {
 
 final class LatencyReportingPDFPage: PDFPage {
     override func draw(with box: PDFDisplayBox, to context: CGContext) {
+        let renderedRect = PDFPageDrawReporter.renderedRect(
+            for: self,
+            box: box,
+            in: context
+        )
         super.draw(with: box, to: context)
-        PDFPageDrawReporter.report(self)
+        PDFPageDrawReporter.report(
+            self,
+            renderedRect: renderedRect,
+            isBitmapContext: context.width > 0 || context.height > 0
+        )
     }
 }
 
@@ -861,7 +1068,6 @@ struct PDFViewer: NSViewRepresentable {
     /// actor means rapid selection never fans out into simultaneous parses.
     private actor DocumentPreparer {
         static let shared = DocumentPreparer()
-        static let maximumInitialPreviewFileSize = 10 * 1_024 * 1_024
         static let initialPreviewWidth: CGFloat = 420
 
         func prepare(
@@ -882,8 +1088,7 @@ struct PDFViewer: NSViewRepresentable {
             document.delegate = pageClassDelegate
             let initialPreview = makeInitialPreview(
                 for: document,
-                darkMode: darkMode,
-                descriptor: descriptor
+                darkMode: darkMode
             )
             let prepared = PreparedDocument(
                 document: document,
@@ -908,11 +1113,9 @@ struct PDFViewer: NSViewRepresentable {
         /// replaces it with a Retina image after the live page is onscreen.
         private func makeInitialPreview(
             for document: PDFDocument,
-            darkMode: Bool,
-            descriptor: PDFFileCacheDescriptor
+            darkMode: Bool
         ) -> PDFWarmPreview? {
             guard darkMode,
-                  descriptor.estimatedCost <= Self.maximumInitialPreviewFileSize,
                   let page = document.page(at: 0)
             else { return nil }
             let pageBounds = page.bounds(for: .cropBox)
@@ -1145,6 +1348,7 @@ final class PDFThumbnailSplitView: NSView, NSSplitViewDelegate {
     private var warmPreviewKey: String?
     private var warmPreviewTask: Task<Void, Never>?
     private var transitionCoverDismissalTask: Task<Void, Never>?
+    private var visibleRenderCoverage = PDFVisibleRegionCoverage()
     private var scheduledWarmPreviewPageIndex: Int?
     private var onscreenPageDidDraw = false
     private var pendingWarmPreview: (
@@ -1203,6 +1407,7 @@ final class PDFThumbnailSplitView: NSView, NSSplitViewDelegate {
         super.layout()
         applyInitialThumbnailWidthIfNeeded()
         demoteWarmPreviewIfViewportChangedBeforeDocumentLoad()
+        refreshVisibleRenderCoverageIfNeeded()
     }
 
     func setThumbnailSidebarVisible(_ visible: Bool) {
@@ -1226,6 +1431,7 @@ final class PDFThumbnailSplitView: NSView, NSSplitViewDelegate {
         }
         promotePendingWarmPreviewIfPossible()
         alignTransitionCoverToCurrentPage()
+        refreshVisibleRenderCoverageIfNeeded()
     }
 
     @discardableResult
@@ -1244,6 +1450,7 @@ final class PDFThumbnailSplitView: NSView, NSSplitViewDelegate {
         warmPreviewTask = nil
         transitionCoverDismissalTask?.cancel()
         transitionCoverDismissalTask = nil
+        visibleRenderCoverage.reset(expected: [:])
         scheduledWarmPreviewPageIndex = nil
         onscreenPageDidDraw = false
         latestPresentedTransitionFrameSource = nil
@@ -1387,6 +1594,7 @@ final class PDFThumbnailSplitView: NSView, NSSplitViewDelegate {
         pendingWarmPreview = nil
         presentedWarmPreview = nil
         warmPreviewView.hide()
+        visibleRenderCoverage.reset(expected: [:])
     }
 
     func cancelDocumentTransition() {
@@ -1426,6 +1634,56 @@ final class PDFThumbnailSplitView: NSView, NSSplitViewDelegate {
         else { return }
         warmPreviewView.alignImage(to: pageRectInPreview)
         cacheExactPlacementIfNeeded(pageRect: pageRectInPreview)
+        refreshVisibleRenderCoverageIfNeeded()
+    }
+
+    private func refreshVisibleRenderCoverageIfNeeded() {
+        guard !warmPreviewView.isHidden,
+              let document = pdfView.document
+        else { return }
+
+        pdfView.layoutDocumentView()
+        pdfView.layoutSubtreeIfNeeded()
+        let visiblePages = pdfView.visiblePages.isEmpty
+            ? [pdfView.currentPage ?? document.page(at: 0)].compactMap { $0 }
+            : pdfView.visiblePages
+        var expected: [Int: CGRect] = [:]
+        for page in visiblePages {
+            let pageIndex = document.index(for: page)
+            guard pageIndex != NSNotFound else { continue }
+            let pageBounds = page.bounds(for: pdfView.displayBox).standardized
+            let pageRectInView = pdfView.convert(pageBounds, from: page)
+            let visibleRectInView = pageRectInView.intersection(pdfView.bounds)
+            guard !visibleRectInView.isNull,
+                  visibleRectInView.width > 0,
+                  visibleRectInView.height > 0
+            else { continue }
+            let visibleRectInPage = pdfView.convert(
+                visibleRectInView,
+                to: page
+            ).intersection(pageBounds)
+            guard !visibleRectInPage.isNull,
+                  visibleRectInPage.width > 0,
+                  visibleRectInPage.height > 0
+            else { continue }
+            expected[pageIndex] = visibleRectInPage
+        }
+        if expected.isEmpty,
+           let page = pdfView.currentPage ?? document.page(at: 0) {
+            let pageIndex = document.index(for: page)
+            let pageBounds = page.bounds(for: pdfView.displayBox).standardized
+            if pageIndex != NSNotFound,
+               !pageBounds.isNull,
+               pageBounds.width > 0,
+               pageBounds.height > 0 {
+                expected[pageIndex] = pageBounds
+            }
+        }
+
+        if visibleRenderCoverage.updateExpected(expected) {
+            transitionCoverDismissalTask?.cancel()
+            transitionCoverDismissalTask = nil
+        }
     }
 
     private func cacheExactPlacementIfNeeded(pageRect: NSRect) {
@@ -1614,7 +1872,11 @@ final class PDFThumbnailSplitView: NSView, NSSplitViewDelegate {
 
     @objc
     private func pdfPageDidDraw(_ notification: Notification) {
-        guard let documentURL = notification.userInfo?["documentURL"] as? URL,
+        guard let event = notification.userInfo?["event"] as? PDFPageDrawEvent else {
+            return
+        }
+        let documentURL = event.documentURL
+        guard
               documentURL.standardizedFileURL == pdfView.document?.documentURL?.standardizedFileURL
         else { return }
 
@@ -1627,29 +1889,44 @@ final class PDFThumbnailSplitView: NSView, NSSplitViewDelegate {
             )
             return
         }
-        scheduleTransitionCoverDismissal(for: documentURL)
+        refreshVisibleRenderCoverageIfNeeded()
+        visibleRenderCoverage.record(
+            pageIndex: event.pageIndex,
+            renderedRect: event.renderedRect
+        )
+        if visibleRenderCoverage.isComplete {
+            scheduleTransitionCoverDismissal(for: documentURL)
+        }
     }
 
-    /// PDFKit renders a visible page as several independent tiles. Hiding the
-    /// cover after the first tile recreates the white flash on complex PDFs,
-    /// because the remaining native page tiles are still white. Debounce from
-    /// the most recent completed draw and reveal only after the tile set has
-    /// been quiet for several display frames.
+    /// PDFKit renders a visible page as independent tiles and can pause for an
+    /// arbitrary amount of time between them on a cold file. The cover stays
+    /// above PDFKit until the accumulated tile rectangles cover every visible
+    /// page pixel. PDFKit's `CATiledLayer` then presents completed tiles over
+    /// its native fade duration; retaining the already-visible preview for
+    /// that Apple-defined interval prevents the compositor's tile order from
+    /// becoming visible without delaying the user's first PDF frame.
     private func scheduleTransitionCoverDismissal(for documentURL: URL) {
+        guard visibleRenderCoverage.isComplete else { return }
+        let coverageGeneration = visibleRenderCoverage.generation
         transitionCoverDismissalTask?.cancel()
         transitionCoverDismissalTask = Task { [weak self] in
             do {
-                // PDFKit can pause between native tile draws even when an
-                // exact cached page image is available. Keep that stable image
-                // above PDFKit until the entire tile stream has been quiet;
-                // using one invariant here prevents latency tuning from
-                // reintroducing a white gap on complex papers.
-                try await Task.sleep(for: .milliseconds(80))
+                await Task.yield()
+                guard let self else { return }
+                self.pdfView.layoutSubtreeIfNeeded()
+                self.pdfView.displayIfNeeded()
+                CATransaction.flush()
+                try await Task.sleep(
+                    for: .seconds(CATiledLayer.fadeDuration())
+                )
             } catch {
                 return
             }
             guard let self,
                   self.onscreenPageDidDraw,
+                  self.visibleRenderCoverage.generation == coverageGeneration,
+                  self.visibleRenderCoverage.isComplete,
                   self.warmPreviewView.documentURL == documentURL.standardizedFileURL,
                   self.pdfView.document?.documentURL?.standardizedFileURL
                     == documentURL.standardizedFileURL
@@ -1667,6 +1944,7 @@ final class PDFThumbnailSplitView: NSView, NSSplitViewDelegate {
             LibraryPDFLatencyTracker.shared.recordStablePDFReveal(
                 documentURL: documentURL
             )
+            self.visibleRenderCoverage.reset(expected: [:])
             self.transitionCoverDismissalTask = nil
         }
     }
@@ -2457,6 +2735,11 @@ final class InvertedPDFPage: PDFPage {
     }
 
     override func draw(with box: PDFDisplayBox, to context: CGContext) {
+        let renderedRect = PDFPageDrawReporter.renderedRect(
+            for: self,
+            box: box,
+            in: context
+        )
         context.saveGState()
         context.setFillColor(NSColor.white.cgColor)
         context.fill(bounds(for: box))
@@ -2469,7 +2752,11 @@ final class InvertedPDFPage: PDFPage {
         context.setFillColor(PDFDarkModePalette.inversionFillColor.cgColor)
         context.fill(bounds(for: box))
         context.restoreGState()
-        PDFPageDrawReporter.report(self)
+        PDFPageDrawReporter.report(
+            self,
+            renderedRect: renderedRect,
+            isBitmapContext: context.width > 0 || context.height > 0
+        )
     }
 
     override func thumbnail(of size: CGSize, for box: PDFDisplayBox) -> NSImage {
