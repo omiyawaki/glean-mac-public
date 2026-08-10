@@ -151,6 +151,49 @@ final class PDFViewerTests: XCTestCase {
         XCTAssertEqual(tracker.latestCitekey, "measured")
         XCTAssertEqual(tracker.sampleCount, 1)
         XCTAssertNotNil(tracker.latestMilliseconds)
+
+        tracker.recordStablePDFReveal(documentURL: url)
+
+        XCTAssertEqual(tracker.latestStablePDFCitekey, "measured")
+        XCTAssertEqual(tracker.stablePDFSampleCount, 1)
+        XCTAssertNotNil(tracker.latestStablePDFMilliseconds)
+    }
+
+    func testWarmPreviewPlacementRequiresMatchingViewportDimensions() throws {
+        let pageRect = CGRect(x: 12, y: 18, width: 620, height: 826)
+        let placement = PDFWarmPreviewPlacement(
+            viewportSize: CGSize(width: 800, height: 600),
+            pageRect: pageRect
+        )
+
+        XCTAssertEqual(
+            placement.pageRect(for: CGSize(width: 800, height: 600)),
+            pageRect
+        )
+        XCTAssertNotNil(
+            placement.pageRect(for: CGSize(width: 800.4, height: 599.6)),
+            "Sub-pixel layout noise should not discard a valid preview."
+        )
+        XCTAssertNil(
+            placement.pageRect(for: CGSize(width: 801, height: 600)),
+            "A changed viewport must never reuse stale PDFKit geometry."
+        )
+        XCTAssertNil(
+            placement.pageRect(for: CGSize(width: 1_200, height: 720)),
+            "A substantially different viewport must use a stable background."
+        )
+        XCTAssertTrue(
+            placement.matches(
+                viewportSize: CGSize(width: 800.4, height: 599.6),
+                pageRect: CGRect(x: 12.3, y: 17.8, width: 620.2, height: 826.1)
+            )
+        )
+        XCTAssertFalse(
+            placement.matches(
+                viewportSize: CGSize(width: 800, height: 600),
+                pageRect: CGRect(x: 12, y: 18, width: 618, height: 826)
+            )
+        )
     }
 
     @MainActor
@@ -171,8 +214,16 @@ final class PDFViewerTests: XCTestCase {
             size: CGSize(width: 24, height: 32)
         )
 
+        let placement = PDFWarmPreviewPlacement(
+            viewportSize: CGSize(width: 640, height: 480),
+            pageRect: CGRect(x: 10, y: 12, width: 600, height: 430)
+        )
         await cache.insert(
-            PDFWarmPreview(image: image, pageIndex: 3),
+            PDFWarmPreview(
+                image: image,
+                pageIndex: 3,
+                placement: placement
+            ),
             for: "fixture|dark:true"
         )
         let restored = await cache.preview(for: "fixture|dark:true")
@@ -182,6 +233,7 @@ final class PDFViewerTests: XCTestCase {
         XCTAssertEqual(restored?.pageIndex, 3)
         XCTAssertEqual(restoredImage.size.width, 24, accuracy: 0.1)
         XCTAssertEqual(restoredImage.size.height, 32, accuracy: 0.1)
+        XCTAssertEqual(restored?.placement, placement)
         XCTAssertNil(missing)
     }
 
@@ -269,6 +321,105 @@ final class PDFViewerTests: XCTestCase {
         XCTAssertEqual(coverRect.minY, livePageRect.minY, accuracy: 0.5)
         XCTAssertEqual(coverRect.width, livePageRect.width, accuracy: 0.5)
         XCTAssertEqual(coverRect.height, livePageRect.height, accuracy: 0.5)
+    }
+
+    @MainActor
+    func testViewportMismatchWithEvictedDocumentAvoidsResizeTwitchWithinLatencyBudget() async throws {
+        let url = try makeImplicitBackgroundPDF()
+        let view = PDFThumbnailSplitView(configuration: .previewLike)
+        view.frame = NSRect(x: 0, y: 0, width: 800, height: 600)
+        view.pdfView.autoScales = true
+        view.pdfView.displayMode = .singlePageContinuous
+        view.pdfView.displayDirection = .vertical
+        view.layoutSubtreeIfNeeded()
+        let coordinator = PDFViewer.Coordinator()
+
+        coordinator.load(url: url, darkMode: true, in: view)
+        _ = try await waitForDocument(in: view)
+        view.layoutSubtreeIfNeeded()
+        view.alignTransitionCoverToCurrentPage()
+        XCTAssertTrue(view.transitionCoverHasImage)
+
+        coordinator.load(url: nil, darkMode: true, in: view)
+        PDFViewer.evictPreparedDocumentsForTesting()
+        view.frame = NSRect(x: 0, y: 0, width: 1_200, height: 720)
+        view.layoutSubtreeIfNeeded()
+
+        let tracker = LibraryPDFLatencyTracker.shared
+        tracker.reset()
+        tracker.selectionChanged(to: "viewport-mismatch")
+        let startedAt = ContinuousClock.now
+        coordinator.load(
+            url: url,
+            citekey: "viewport-mismatch",
+            darkMode: true,
+            in: view
+        )
+        let selectionReturnLatency = startedAt.duration(to: .now)
+
+        XCTAssertNil(
+            view.pdfView.document,
+            "The test must exercise a parsed-document cache miss."
+        )
+        XCTAssertTrue(view.isTransitionCoverVisible)
+        XCTAssertFalse(
+            view.transitionCoverHasImage,
+            "Mismatched cached geometry must show only the stable dark surface."
+        )
+        XCTAssertTrue(view.isLoading)
+        XCTAssertLessThan(
+            selectionReturnLatency,
+            .milliseconds(50),
+            "A cache miss must never block the selection interaction."
+        )
+
+        let document = try await waitForDocument(in: view)
+        view.layoutSubtreeIfNeeded()
+        let exactPlacementLatency = startedAt.duration(to: .now)
+        XCTAssertTrue(view.transitionCoverHasImage)
+        let coverRect = try XCTUnwrap(view.transitionCoverImageRect)
+        let livePageRect = try XCTUnwrap(
+            view.currentPDFPageRectInTransitionCover
+        )
+        XCTAssertEqual(coverRect.minX, livePageRect.minX, accuracy: 0.5)
+        XCTAssertEqual(coverRect.minY, livePageRect.minY, accuracy: 0.5)
+        XCTAssertEqual(coverRect.width, livePageRect.width, accuracy: 0.5)
+        XCTAssertEqual(coverRect.height, livePageRect.height, accuracy: 0.5)
+        XCTAssertLessThan(
+            exactPlacementLatency,
+            .milliseconds(500),
+            "Even the synthetic worst-case reparse should establish exact geometry promptly."
+        )
+
+        let page = try XCTUnwrap(document.page(at: 0) as? InvertedPDFPage)
+        let context = try makeBitmapContext(width: 240, height: 240)
+        page.draw(with: .mediaBox, to: context)
+        for _ in 0..<100 where view.isTransitionCoverVisible {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let stablePDFLatency = try XCTUnwrap(
+            tracker.latestStablePDFMilliseconds
+        )
+        XCTAssertFalse(view.isTransitionCoverVisible)
+        XCTAssertEqual(
+            tracker.latestStablePDFCitekey,
+            "viewport-mismatch"
+        )
+        XCTAssertEqual(tracker.stableCachedPreviewSampleCount, 1)
+        XCTAssertEqual(
+            tracker.stableCachedPreviewP95Milliseconds,
+            stablePDFLatency
+        )
+        XCTAssertLessThan(
+            stablePDFLatency,
+            750,
+            "Selection-to-stable-live-PDF latency exceeded the worst-case budget."
+        )
+        print(
+            "PDF viewport-mismatch benchmark: selection return "
+                + "\(selectionReturnLatency), exact preview \(exactPlacementLatency), "
+                + String(format: "stable live PDF %.2f ms", stablePDFLatency)
+        )
     }
 
     @MainActor

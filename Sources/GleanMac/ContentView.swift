@@ -270,6 +270,39 @@ struct ContentView: View {
         r.registerState(key: "libraryPDFLatency.cachedPreviewSampleCount") {
             pdfLatency.cachedPreviewSampleCount
         }
+        r.registerState(key: "libraryPDFLatency.latestStablePDFMs") {
+            pdfLatency.latestStablePDFMilliseconds ?? -1
+        }
+        r.registerState(key: "libraryPDFLatency.latestStablePDFCitekey") {
+            pdfLatency.latestStablePDFCitekey ?? ""
+        }
+        r.registerState(key: "libraryPDFLatency.stablePDFP50Ms") {
+            pdfLatency.stablePDFP50Milliseconds ?? -1
+        }
+        r.registerState(key: "libraryPDFLatency.stablePDFP95Ms") {
+            pdfLatency.stablePDFP95Milliseconds ?? -1
+        }
+        r.registerState(key: "libraryPDFLatency.stablePDFSampleCount") {
+            pdfLatency.stablePDFSampleCount
+        }
+        r.registerState(key: "libraryPDFLatency.stableCachedPreviewP50Ms") {
+            pdfLatency.stableCachedPreviewP50Milliseconds ?? -1
+        }
+        r.registerState(key: "libraryPDFLatency.stableCachedPreviewP95Ms") {
+            pdfLatency.stableCachedPreviewP95Milliseconds ?? -1
+        }
+        r.registerState(key: "libraryPDFLatency.stableCachedPreviewSampleCount") {
+            pdfLatency.stableCachedPreviewSampleCount
+        }
+        r.registerState(key: "libraryPDFLatency.stableDocumentCacheHitP50Ms") {
+            pdfLatency.stableDocumentCacheHitP50Milliseconds ?? -1
+        }
+        r.registerState(key: "libraryPDFLatency.stableDocumentCacheHitP95Ms") {
+            pdfLatency.stableDocumentCacheHitP95Milliseconds ?? -1
+        }
+        r.registerState(key: "libraryPDFLatency.stableDocumentCacheHitSampleCount") {
+            pdfLatency.stableDocumentCacheHitSampleCount
+        }
         r.registerState(key: "actions.active") { actions.activeCount }
         r.registerState(key: "actions.failed") { actions.failedCount }
 
