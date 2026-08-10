@@ -11,7 +11,9 @@ enum LibraryRowLayout {
     static let rowHeight: CGFloat = 72
     static let separatorHeight: CGFloat = 1
     static let sectionHeaderHeight: CGFloat = 34
-    static let contentInset: CGFloat = 12
+    /// Matches the navigation title and native `List` content axis used by
+    /// the intake views.
+    static let contentInset: CGFloat = 20
     /// The collapsed rail occupies 22 points and sits 22 points inward from
     /// the native scrollbar. This gutter gives both controls permanent space
     /// without sacrificing the expanded overlay behavior.
@@ -188,10 +190,12 @@ struct LibraryView: View {
                         )
                     },
                     tickStrideCandidates: [1, 3, 6, 12, 24, 60, 120, 240, 600],
-                    // Keep one stable annual tick cadence in both states.
-                    // Pointer targeting still resolves the complete monthly
-                    // chronology while those same ticks magnify on hover.
-                    minimumTickStride: 12,
+                    // Begin with a quarterly calendar cadence, then thin it
+                    // only as much as the available height requires. Pointer
+                    // targeting still resolves the full monthly chronology.
+                    minimumTickStride: 3,
+                    minimumTickSpacing: 2,
+                    magnificationIntensity: 1.7,
                     tickAlignment: chronology.firstIndex(where: \.isYearBoundary) ?? 0,
                     onSelect: { marker in
                         guard let destinationPosition = marker.destinationPosition else {
