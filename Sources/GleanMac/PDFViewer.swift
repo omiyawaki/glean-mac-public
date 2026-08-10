@@ -1,6 +1,7 @@
 import SwiftUI
 import PDFKit
 import AppKit
+import CryptoKit
 import OSLog
 
 private let libraryPDFLatencyLog = Logger(
@@ -16,6 +17,9 @@ final class LibraryPDFLatencyTracker {
     enum FrameSource: String {
         case pdfPage = "pdf-page"
         case cachedPreview = "cached-preview"
+        case diskCachedPreview = "disk-cached-preview"
+        case preparedPreview = "prepared-preview"
+        case darkTransition = "dark-transition"
     }
 
     static let shared = LibraryPDFLatencyTracker()
@@ -25,7 +29,7 @@ final class LibraryPDFLatencyTracker {
         let citekey: String
         let startedAt: ContinuousClock.Instant
         var expectedURL: URL?
-        var prefersCachedPreview = false
+        var requiredFrameSource: FrameSource?
     }
 
     private var pending: PendingSelection?
@@ -62,14 +66,14 @@ final class LibraryPDFLatencyTracker {
     func expectFirstFrame(
         citekey: String?,
         url: URL,
-        prefersCachedPreview: Bool = false
+        requiredFrameSource: FrameSource? = nil
     ) {
         guard let citekey,
               var pending,
               pending.citekey == citekey
         else { return }
         pending.expectedURL = url.standardizedFileURL
-        pending.prefersCachedPreview = prefersCachedPreview
+        pending.requiredFrameSource = requiredFrameSource
         self.pending = pending
     }
 
@@ -80,7 +84,7 @@ final class LibraryPDFLatencyTracker {
     ) {
         guard let pending,
               pending.expectedURL == documentURL.standardizedFileURL,
-              !pending.prefersCachedPreview || source == .cachedPreview
+              pending.requiredFrameSource == nil || source == pending.requiredFrameSource
         else { return }
 
         let milliseconds = (finishedAt - pending.startedAt) / .milliseconds(1)
@@ -193,7 +197,7 @@ struct PDFThumbnailSidebarConfiguration: Equatable {
     )
 }
 
-private struct PDFFileCacheDescriptor: Sendable {
+struct PDFFileCacheDescriptor: Sendable {
     let identity: String
     let estimatedCost: Int
 
@@ -262,13 +266,136 @@ private final class PDFWarmPreviewMemoryCache: @unchecked Sendable {
     }
 }
 
-private final class PDFWarmPreview: NSObject {
+final class PDFWarmPreview: NSObject, @unchecked Sendable {
     let image: NSImage
     let pageIndex: Int
 
     init(image: NSImage, pageIndex: Int) {
         self.image = image
         self.pageIndex = pageIndex
+    }
+}
+
+/// A small persistent bridge image makes a paper that has been opened before
+/// feel warm even after relaunching Glean. Entries are keyed by the PDF's path,
+/// size, modification date, and dark-mode state, so changed files never reuse
+/// stale pixels. All file IO and image encoding/decoding stays off the main
+/// actor.
+actor PDFWarmPreviewDiskCache {
+    private struct StoredPreview: Codable {
+        let version: Int
+        let pageIndex: Int
+        let pngData: Data
+    }
+
+    static let shared = PDFWarmPreviewDiskCache()
+    static let currentVersion = 1
+    static let countLimit = 256
+    static let totalSizeLimit = 256 * 1_024 * 1_024
+
+    private let directory: URL
+    private let countLimit: Int
+    private let totalSizeLimit: Int
+
+    init(
+        directory: URL? = nil,
+        countLimit: Int = PDFWarmPreviewDiskCache.countLimit,
+        totalSizeLimit: Int = PDFWarmPreviewDiskCache.totalSizeLimit
+    ) {
+        if let directory {
+            self.directory = directory
+        } else {
+            let base = FileManager.default.urls(
+                for: .cachesDirectory,
+                in: .userDomainMask
+            ).first ?? FileManager.default.homeDirectoryForCurrentUser
+            self.directory = base
+                .appendingPathComponent("Glean", isDirectory: true)
+                .appendingPathComponent("PDFWarmPreviews", isDirectory: true)
+        }
+        self.countLimit = max(1, countLimit)
+        self.totalSizeLimit = max(1, totalSizeLimit)
+    }
+
+    func preview(for key: String) -> PDFWarmPreview? {
+        let url = entryURL(for: key)
+        guard let data = try? Data(contentsOf: url),
+              let stored = try? PropertyListDecoder().decode(
+                StoredPreview.self,
+                from: data
+              ),
+              stored.version == Self.currentVersion,
+              let image = NSImage(data: stored.pngData)
+        else { return nil }
+        try? FileManager.default.setAttributes(
+            [.modificationDate: Date()],
+            ofItemAtPath: url.path
+        )
+        return PDFWarmPreview(image: image, pageIndex: stored.pageIndex)
+    }
+
+    func insert(_ preview: PDFWarmPreview, for key: String) {
+        guard let tiffData = preview.image.tiffRepresentation,
+              let bitmap = NSBitmapImageRep(data: tiffData),
+              let pngData = bitmap.representation(using: .png, properties: [:])
+        else { return }
+        let stored = StoredPreview(
+            version: Self.currentVersion,
+            pageIndex: preview.pageIndex,
+            pngData: pngData
+        )
+        let encoder = PropertyListEncoder()
+        encoder.outputFormat = .binary
+        guard let data = try? encoder.encode(stored) else { return }
+        do {
+            try FileManager.default.createDirectory(
+                at: directory,
+                withIntermediateDirectories: true
+            )
+            try data.write(to: entryURL(for: key), options: .atomic)
+            pruneIfNeeded()
+        } catch {
+            libraryPDFLatencyLog.error(
+                "Could not persist PDF preview: \(error.localizedDescription, privacy: .public)"
+            )
+        }
+    }
+
+    private func entryURL(for key: String) -> URL {
+        let digest = SHA256.hash(data: Data(key.utf8))
+            .map { String(format: "%02x", $0) }
+            .joined()
+        return directory.appendingPathComponent("\(digest).plist")
+    }
+
+    private func pruneIfNeeded() {
+        let keys: Set<URLResourceKey> = [
+            .contentModificationDateKey,
+            .fileSizeKey,
+            .isRegularFileKey
+        ]
+        guard var entries = try? FileManager.default.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: Array(keys),
+            options: [.skipsHiddenFiles]
+        ).compactMap({ url -> (url: URL, date: Date, size: Int)? in
+            guard let values = try? url.resourceValues(forKeys: keys),
+                  values.isRegularFile == true
+            else { return nil }
+            return (
+                url,
+                values.contentModificationDate ?? .distantPast,
+                values.fileSize ?? 0
+            )
+        }) else { return }
+        entries.sort { $0.date > $1.date }
+        var retainedSize = 0
+        for (index, entry) in entries.enumerated() {
+            retainedSize += entry.size
+            if index >= countLimit || retainedSize > totalSizeLimit {
+                try? FileManager.default.removeItem(at: entry.url)
+            }
+        }
     }
 }
 
@@ -323,14 +450,33 @@ private actor PDFWarmPreviewRenderQueue {
 private final class PDFWarmPreviewView: NSView {
     var image: NSImage?
     var documentURL: URL?
+    var frameSource: LibraryPDFLatencyTracker.FrameSource?
     var backgroundColor: NSColor = .clear
-    var onFirstDraw: ((URL, ContinuousClock.Instant) -> Void)?
+    var onFirstDraw: ((URL, LibraryPDFLatencyTracker.FrameSource, ContinuousClock.Instant) -> Void)?
 
     private(set) var reportedCurrentImage = false
 
-    func show(image: NSImage, documentURL: URL) {
+    override var isOpaque: Bool {
+        backgroundColor.alphaComponent >= 1
+    }
+
+    func show(
+        image: NSImage,
+        documentURL: URL,
+        frameSource: LibraryPDFLatencyTracker.FrameSource
+    ) {
         self.image = image
         self.documentURL = documentURL
+        self.frameSource = frameSource
+        reportedCurrentImage = false
+        isHidden = false
+        needsDisplay = true
+    }
+
+    func showBackground(documentURL: URL) {
+        image = nil
+        self.documentURL = documentURL
+        frameSource = nil
         reportedCurrentImage = false
         isHidden = false
         needsDisplay = true
@@ -340,6 +486,7 @@ private final class PDFWarmPreviewView: NSView {
         isHidden = true
         image = nil
         documentURL = nil
+        frameSource = nil
         reportedCurrentImage = false
     }
 
@@ -374,9 +521,9 @@ private final class PDFWarmPreviewView: NSView {
             hints: [.interpolation: NSImageInterpolation.high]
         )
 
-        if !reportedCurrentImage, let documentURL {
+        if !reportedCurrentImage, let documentURL, let frameSource {
             reportedCurrentImage = true
-            onFirstDraw?(documentURL, .now)
+            onFirstDraw?(documentURL, frameSource, .now)
         }
     }
 }
@@ -418,6 +565,14 @@ struct PDFViewer: NSViewRepresentable {
 
         nsView.setThumbnailSidebarVisible(thumbnailSidebarVisible)
 
+        // Establish the destination surface before PDFKit sees a new
+        // document. Some PDFs expose PDFKit's white page layer synchronously
+        // during assignment, before the first inverted tile is ready.
+        nsView.setPDFBackgroundColor(
+            darkMode ? PDFDarkModePalette.pageBackgroundColor : .clear
+        )
+        nsView.setThumbnailDarkMode(darkMode)
+
         if coord.requestedURL != url
             || coord.requestedCitekey != citekey
             || coord.requestedDarkMode != darkMode {
@@ -428,13 +583,6 @@ struct PDFViewer: NSViewRepresentable {
                 in: nsView
             )
         }
-
-        // Match the page-background color the .difference fill produces so
-        // the gutter around pages visually shares the same native dark surface.
-        nsView.setPDFBackgroundColor(
-            darkMode ? PDFDarkModePalette.pageBackgroundColor : .clear
-        )
-        nsView.setThumbnailDarkMode(darkMode)
     }
 
     static func dismantleNSView(_ nsView: PDFThumbnailSplitView, coordinator: Coordinator) {
@@ -443,10 +591,16 @@ struct PDFViewer: NSViewRepresentable {
 
     private final class PreparedDocument: @unchecked Sendable {
         let document: PDFDocument
+        let initialPreview: PDFWarmPreview?
         private let pageClassDelegate: PageClassDelegate
 
-        init(document: PDFDocument, pageClassDelegate: PageClassDelegate) {
+        init(
+            document: PDFDocument,
+            initialPreview: PDFWarmPreview?,
+            pageClassDelegate: PageClassDelegate
+        ) {
             self.document = document
+            self.initialPreview = initialPreview
             self.pageClassDelegate = pageClassDelegate
         }
     }
@@ -512,6 +666,8 @@ struct PDFViewer: NSViewRepresentable {
     /// actor means rapid selection never fans out into simultaneous parses.
     private actor DocumentPreparer {
         static let shared = DocumentPreparer()
+        static let maximumInitialPreviewFileSize = 10 * 1_024 * 1_024
+        static let initialPreviewWidth: CGFloat = 420
 
         func prepare(
             url: URL,
@@ -529,8 +685,14 @@ struct PDFViewer: NSViewRepresentable {
             let pageClassDelegate = PageClassDelegate(darkMode: darkMode)
             guard let document = PDFDocument(url: url) else { return nil }
             document.delegate = pageClassDelegate
+            let initialPreview = makeInitialPreview(
+                for: document,
+                darkMode: darkMode,
+                descriptor: descriptor
+            )
             let prepared = PreparedDocument(
                 document: document,
+                initialPreview: initialPreview,
                 pageClassDelegate: pageClassDelegate
             )
 
@@ -544,11 +706,39 @@ struct PDFViewer: NSViewRepresentable {
             )
             return prepared
         }
+
+        /// Produce useful dark pixels before the main actor hands the document
+        /// to PDFKit. The preview is intentionally modest resolution: it only
+        /// bridges the first tile render, while the normal warm-preview path
+        /// replaces it with a Retina image after the live page is onscreen.
+        private func makeInitialPreview(
+            for document: PDFDocument,
+            darkMode: Bool,
+            descriptor: PDFFileCacheDescriptor
+        ) -> PDFWarmPreview? {
+            guard darkMode,
+                  descriptor.estimatedCost <= Self.maximumInitialPreviewFileSize,
+                  let page = document.page(at: 0)
+            else { return nil }
+            let pageBounds = page.bounds(for: .cropBox)
+            guard pageBounds.width > 0, pageBounds.height > 0 else { return nil }
+            let displaySize = CGSize(
+                width: Self.initialPreviewWidth,
+                height: Self.initialPreviewWidth * pageBounds.height / pageBounds.width
+            )
+            guard let image = PDFThumbnailRasterizer.thumbnail(
+                page: page,
+                displaySize: displaySize,
+                box: .cropBox,
+                renderScale: 1
+            ) else { return nil }
+            return PDFWarmPreview(image: image, pageIndex: 0)
+        }
     }
 
     @MainActor
     final class Coordinator: NSObject {
-        static let selectionDebounce = Duration.milliseconds(120)
+        static let selectionDebounce = Duration.milliseconds(16)
 
         private(set) var requestedURL: URL?
         private(set) var requestedCitekey: String?
@@ -581,6 +771,9 @@ struct PDFViewer: NSViewRepresentable {
 
             loadTask?.cancel()
             loadTask = nil
+            splitView.setPDFBackgroundColor(
+                darkMode ? PDFDarkModePalette.pageBackgroundColor : .clear
+            )
             splitView.setThumbnailDarkMode(darkMode, reloadThumbnails: false)
 
             guard let url else {
@@ -600,17 +793,19 @@ struct PDFViewer: NSViewRepresentable {
             LibraryPDFLatencyTracker.shared.expectFirstFrame(
                 citekey: citekey,
                 url: url,
-                prefersCachedPreview: hasWarmPreview
+                requiredFrameSource: hasWarmPreview
+                    ? .cachedPreview
+                    : (darkMode ? .darkTransition : nil)
             )
-            if hasWarmPreview {
-                splitView.displayWarmPreviewIfNeeded()
-            }
+            splitView.displayTransitionCoverIfNeeded()
             if let cached = DocumentMemoryCache.shared.document(
                 for: descriptor,
                 darkMode: darkMode
             ) {
                 splitView.setDocument(cached.document)
-                splitView.setLoading(false)
+                if !darkMode {
+                    splitView.setLoading(false)
+                }
                 restorePageIfNeeded(
                     warmPreviewPageIndex ?? restorePageIndex,
                     in: cached.document,
@@ -627,6 +822,31 @@ struct PDFViewer: NSViewRepresentable {
             splitView.setLoading(true)
 
             loadTask = Task { [weak self, weak splitView] in
+                var transitionPreviewPageIndex = warmPreviewPageIndex
+                if darkMode,
+                   transitionPreviewPageIndex == nil,
+                   let diskPreview = await PDFWarmPreviewDiskCache.shared.preview(
+                       for: "\(descriptor.identity)|dark:\(darkMode)"
+                   ) {
+                    guard let self, let splitView,
+                          !Task.isCancelled,
+                          self.requestGeneration == generation,
+                          self.requestedURL == url,
+                          self.requestedDarkMode == darkMode
+                    else { return }
+                    LibraryPDFLatencyTracker.shared.expectFirstFrame(
+                        citekey: citekey,
+                        url: url,
+                        requiredFrameSource: .diskCachedPreview
+                    )
+                    transitionPreviewPageIndex = splitView.showTransitionPreview(
+                        diskPreview,
+                        url: url,
+                        descriptor: descriptor,
+                        darkMode: darkMode,
+                        frameSource: .diskCachedPreview
+                    )
+                }
                 do {
                     try await Task.sleep(for: Self.selectionDebounce)
                 } catch {
@@ -647,13 +867,45 @@ struct PDFViewer: NSViewRepresentable {
                 else { return }
 
                 guard let prepared else {
-                    splitView.setLoading(false)
+                    splitView.cancelDocumentTransition()
                     return
                 }
+                let preparedPreviewPageIndex: Int?
+                if transitionPreviewPageIndex == nil,
+                   let preview = prepared.initialPreview {
+                    LibraryPDFLatencyTracker.shared.expectFirstFrame(
+                        citekey: citekey,
+                        url: url,
+                        requiredFrameSource: .preparedPreview
+                    )
+                    preparedPreviewPageIndex = splitView.showTransitionPreview(
+                        preview,
+                        url: url,
+                        descriptor: descriptor,
+                        darkMode: darkMode,
+                        frameSource: .preparedPreview
+                    )
+                    if !url.path.hasPrefix(
+                        FileManager.default.temporaryDirectory.path
+                    ) {
+                        Task {
+                            await PDFWarmPreviewDiskCache.shared.insert(
+                                preview,
+                                for: "\(descriptor.identity)|dark:\(darkMode)"
+                            )
+                        }
+                    }
+                } else {
+                    preparedPreviewPageIndex = nil
+                }
                 splitView.setDocument(prepared.document)
-                splitView.setLoading(false)
+                if !darkMode {
+                    splitView.setLoading(false)
+                }
                 self.restorePageIfNeeded(
-                    warmPreviewPageIndex ?? restorePageIndex,
+                    transitionPreviewPageIndex
+                        ?? preparedPreviewPageIndex
+                        ?? restorePageIndex,
                     in: prepared.document,
                     splitView: splitView
                 )
@@ -696,11 +948,22 @@ final class PDFThumbnailSplitView: NSView, NSSplitViewDelegate {
     private var thumbnailDarkMode: Bool?
     private var warmPreviewKey: String?
     private var warmPreviewTask: Task<Void, Never>?
+    private var transitionCoverDismissalTask: Task<Void, Never>?
     private var scheduledWarmPreviewPageIndex: Int?
     private var onscreenPageDidDraw = false
 
     private(set) var isThumbnailSidebarVisible = true
     private(set) var isLoading = false
+    private(set) var latestPresentedTransitionFrameSource:
+        LibraryPDFLatencyTracker.FrameSource?
+
+    var isTransitionCoverVisible: Bool { !warmPreviewView.isHidden }
+    var isTransitionCoverOpaque: Bool { warmPreviewView.isOpaque }
+    var transitionCoverHasImage: Bool { warmPreviewView.image != nil }
+    var transitionCoverFrameSource: LibraryPDFLatencyTracker.FrameSource? {
+        warmPreviewView.frameSource
+    }
+    var transitionCoverBackgroundColor: NSColor { warmPreviewView.backgroundColor }
 
     init(
         pdfView: PDFView = PDFView(),
@@ -727,6 +990,7 @@ final class PDFThumbnailSplitView: NSView, NSSplitViewDelegate {
 
     deinit {
         warmPreviewTask?.cancel()
+        transitionCoverDismissalTask?.cancel()
         NotificationCenter.default.removeObserver(self)
     }
 
@@ -751,38 +1015,95 @@ final class PDFThumbnailSplitView: NSView, NSSplitViewDelegate {
     }
 
     @discardableResult
-    fileprivate func prepareForDocument(
+    func prepareForDocument(
         url: URL,
         descriptor: PDFFileCacheDescriptor,
         darkMode: Bool
     ) -> Int? {
+        // Keep this invariant local to the transition itself. Coordinators and
+        // tests may enter here directly, and no caller should be able to expose
+        // a transparent cover while preparing a dark page.
+        setPDFBackgroundColor(
+            darkMode ? PDFDarkModePalette.pageBackgroundColor : .clear
+        )
         warmPreviewTask?.cancel()
         warmPreviewTask = nil
+        transitionCoverDismissalTask?.cancel()
+        transitionCoverDismissalTask = nil
         scheduledWarmPreviewPageIndex = nil
         onscreenPageDidDraw = false
+        latestPresentedTransitionFrameSource = nil
         let key = "\(descriptor.identity)|dark:\(darkMode)"
         warmPreviewKey = key
         guard let preview = PDFWarmPreviewMemoryCache.shared.preview(for: key) else {
-            warmPreviewView.hide()
+            if darkMode {
+                warmPreviewView.showBackground(
+                    documentURL: url.standardizedFileURL
+                )
+            } else {
+                warmPreviewView.hide()
+            }
+            setLoading(true)
             return nil
         }
         warmPreviewView.show(
             image: preview.image,
-            documentURL: url.standardizedFileURL
+            documentURL: url.standardizedFileURL,
+            frameSource: .cachedPreview
         )
+        latestPresentedTransitionFrameSource = .cachedPreview
+        setLoading(false)
+        return preview.pageIndex
+    }
+
+    @discardableResult
+    fileprivate func showTransitionPreview(
+        _ preview: PDFWarmPreview,
+        url: URL,
+        descriptor: PDFFileCacheDescriptor,
+        darkMode: Bool,
+        frameSource: LibraryPDFLatencyTracker.FrameSource
+    ) -> Int? {
+        let key = "\(descriptor.identity)|dark:\(darkMode)"
+        guard warmPreviewKey == key else { return nil }
+        let pixelCost = preview.image.cgImage(
+            forProposedRect: nil,
+            context: nil,
+            hints: nil
+        ).map { $0.width * $0.height * 4 } ?? 1
+        PDFWarmPreviewMemoryCache.shared.insert(
+            preview,
+            for: key,
+            cost: pixelCost
+        )
+        warmPreviewView.show(
+            image: preview.image,
+            documentURL: url.standardizedFileURL,
+            frameSource: frameSource
+        )
+        latestPresentedTransitionFrameSource = frameSource
+        setLoading(false)
+        displayTransitionCoverIfNeeded()
         return preview.pageIndex
     }
 
     func clearWarmPreview() {
         warmPreviewTask?.cancel()
         warmPreviewTask = nil
+        transitionCoverDismissalTask?.cancel()
+        transitionCoverDismissalTask = nil
         warmPreviewKey = nil
         scheduledWarmPreviewPageIndex = nil
         onscreenPageDidDraw = false
         warmPreviewView.hide()
     }
 
-    func displayWarmPreviewIfNeeded() {
+    func cancelDocumentTransition() {
+        setLoading(false)
+        clearWarmPreview()
+    }
+
+    func displayTransitionCoverIfNeeded() {
         guard !warmPreviewView.isHidden else { return }
         warmPreviewView.displayIfNeeded()
     }
@@ -869,16 +1190,15 @@ final class PDFThumbnailSplitView: NSView, NSSplitViewDelegate {
         loadingIndicator.isDisplayedWhenStopped = false
         loadingIndicator.isHidden = true
         warmPreviewView.isHidden = true
-        warmPreviewView.onFirstDraw = { [weak self] documentURL, finishedAt in
+        warmPreviewView.onFirstDraw = { [weak self] documentURL, source, finishedAt in
             LibraryPDFLatencyTracker.shared.recordFirstPageDraw(
                 documentURL: documentURL,
-                source: .cachedPreview,
+                source: source,
                 finishedAt: finishedAt
             )
+            self?.setLoading(false)
             guard let self, self.onscreenPageDidDraw else { return }
-            DispatchQueue.main.async { [weak self] in
-                self?.warmPreviewView.hide()
-            }
+            self.scheduleTransitionCoverDismissal(for: documentURL)
         }
 
         thumbnailView.pdfView = pdfView
@@ -930,12 +1250,43 @@ final class PDFThumbnailSplitView: NSView, NSSplitViewDelegate {
 
         onscreenPageDidDraw = true
         scheduleWarmPreviewIfNeeded()
-        guard !warmPreviewView.isHidden,
-              warmPreviewView.reportedCurrentImage
-        else { return }
-        DispatchQueue.main.async { [weak self] in
-            guard let self, self.onscreenPageDidDraw else { return }
+        guard !warmPreviewView.isHidden else {
+            setLoading(false)
+            return
+        }
+        scheduleTransitionCoverDismissal(for: documentURL)
+    }
+
+    /// PDFKit renders a visible page as several independent tiles. Hiding the
+    /// cover after the first tile recreates the white flash on complex PDFs,
+    /// because the remaining native page tiles are still white. Debounce from
+    /// the most recent completed draw and reveal only after the tile set has
+    /// been quiet for several display frames.
+    private func scheduleTransitionCoverDismissal(for documentURL: URL) {
+        transitionCoverDismissalTask?.cancel()
+        transitionCoverDismissalTask = Task { [weak self] in
+            do {
+                try await Task.sleep(for: .milliseconds(80))
+            } catch {
+                return
+            }
+            guard let self,
+                  self.onscreenPageDidDraw,
+                  self.warmPreviewView.documentURL == documentURL.standardizedFileURL,
+                  self.pdfView.document?.documentURL?.standardizedFileURL
+                    == documentURL.standardizedFileURL
+            else { return }
+            let revealedDarkTransition = !self.warmPreviewView.reportedCurrentImage
             self.warmPreviewView.hide()
+            self.setLoading(false)
+            if revealedDarkTransition {
+                LibraryPDFLatencyTracker.shared.recordFirstPageDraw(
+                    documentURL: documentURL,
+                    source: .darkTransition,
+                    finishedAt: .now
+                )
+            }
+            self.transitionCoverDismissalTask = nil
         }
     }
 
@@ -1654,7 +2005,9 @@ enum PDFThumbnailRasterizer {
         context.translateBy(x: -pageBounds.minX, y: -pageBounds.minY)
         context.setFillColor(NSColor.white.cgColor)
         context.fill(pageBounds)
-        page.draw(with: box, to: context)
+        PDFThumbnailRenderingContext.perform {
+            page.draw(with: box, to: context)
+        }
         context.restoreGState()
 
         guard let image = context.makeImage() else {

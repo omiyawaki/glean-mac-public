@@ -143,6 +143,106 @@ final class PDFViewerTests: XCTestCase {
     }
 
     @MainActor
+    func testPersistentWarmPreviewRoundTripsOffMainCache() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let cache = PDFWarmPreviewDiskCache(
+            directory: directory,
+            countLimit: 2,
+            totalSizeLimit: 1_024 * 1_024
+        )
+        let context = try makeBitmapContext(width: 24, height: 32)
+        context.setFillColor(PDFDarkModePalette.pageBackgroundColor.cgColor)
+        context.fill(CGRect(x: 0, y: 0, width: 24, height: 32))
+        let image = NSImage(
+            cgImage: try XCTUnwrap(context.makeImage()),
+            size: CGSize(width: 24, height: 32)
+        )
+
+        await cache.insert(
+            PDFWarmPreview(image: image, pageIndex: 3),
+            for: "fixture|dark:true"
+        )
+        let restored = await cache.preview(for: "fixture|dark:true")
+        let restoredImage = try XCTUnwrap(restored?.image)
+        let missing = await cache.preview(for: "changed-fixture|dark:true")
+
+        XCTAssertEqual(restored?.pageIndex, 3)
+        XCTAssertEqual(restoredImage.size.width, 24, accuracy: 0.1)
+        XCTAssertEqual(restoredImage.size.height, 32, accuracy: 0.1)
+        XCTAssertNil(missing)
+    }
+
+    @MainActor
+    func testDarkDocumentTransitionKeepsOpaqueDarkCoverUntilTilesSettle() async throws {
+        let url = try makeImplicitBackgroundPDF()
+        let view = PDFThumbnailSplitView(configuration: .previewLike)
+        view.frame = NSRect(x: 0, y: 0, width: 800, height: 600)
+        let coordinator = PDFViewer.Coordinator()
+
+        coordinator.load(url: url, darkMode: true, in: view)
+
+        XCTAssertTrue(view.isTransitionCoverVisible)
+        XCTAssertTrue(view.isTransitionCoverOpaque)
+        XCTAssertEqual(
+            view.transitionCoverBackgroundColor,
+            PDFDarkModePalette.pageBackgroundColor
+        )
+        XCTAssertTrue(view.isLoading)
+
+        let document = try await waitForDocument(in: view)
+        let page = try XCTUnwrap(document.page(at: 0) as? InvertedPDFPage)
+        let context = try makeBitmapContext(width: 240, height: 240)
+        page.draw(with: .mediaBox, to: context)
+
+        // The first completed tile must not uncover PDFKit immediately.
+        await Task.yield()
+        XCTAssertTrue(view.isTransitionCoverVisible)
+
+        for _ in 0..<40 where view.isTransitionCoverVisible {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertFalse(view.isTransitionCoverVisible)
+        XCTAssertFalse(view.isLoading)
+    }
+
+    @MainActor
+    func testColdDarkLoadPublishesPreparedPreviewBeforeLiveTilesSettle() async throws {
+        let url = try makeImplicitBackgroundPDF()
+        let view = PDFThumbnailSplitView(configuration: .previewLike)
+        view.frame = NSRect(x: 0, y: 0, width: 800, height: 600)
+        view.layoutSubtreeIfNeeded()
+        let coordinator = PDFViewer.Coordinator()
+
+        coordinator.load(
+            url: url,
+            citekey: "cold-preview",
+            darkMode: true,
+            in: view
+        )
+        _ = try await waitForDocument(in: view)
+
+        XCTAssertEqual(
+            view.latestPresentedTransitionFrameSource,
+            .preparedPreview,
+            "A cold dark load should prepare useful page pixels before exposing PDFKit."
+        )
+
+        let revisitView = PDFThumbnailSplitView(configuration: .previewLike)
+        let restoredPageIndex = revisitView.prepareForDocument(
+            url: url,
+            descriptor: PDFFileCacheDescriptor(url: url),
+            darkMode: true
+        )
+        XCTAssertEqual(restoredPageIndex, 0)
+        XCTAssertTrue(revisitView.isTransitionCoverVisible)
+        XCTAssertTrue(revisitView.isTransitionCoverOpaque)
+        XCTAssertTrue(revisitView.transitionCoverHasImage)
+        XCTAssertEqual(revisitView.transitionCoverFrameSource, .cachedPreview)
+    }
+
+    @MainActor
     func testPDFDocumentCacheInvalidatesWhenFileChanges() async throws {
         let url = try makeImplicitBackgroundPDF()
         let view = PDFThumbnailSplitView(configuration: .previewLike)
@@ -502,6 +602,19 @@ final class PDFViewerTests: XCTestCase {
         context.closePDF()
 
         return url
+    }
+
+    private func makeBitmapContext(width: Int, height: Int) throws -> CGContext {
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        return try XCTUnwrap(CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: width * 4,
+            space: colorSpace,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ))
     }
 
     @MainActor
