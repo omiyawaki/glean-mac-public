@@ -111,6 +111,38 @@ final class PDFViewerTests: XCTestCase {
     }
 
     @MainActor
+    func testLatencyMetricCompletesWhenMainPagePixelsAreDrawn() async throws {
+        let url = try makeImplicitBackgroundPDF()
+        let delegate = LatencyPageDelegate()
+        let document = try XCTUnwrap(PDFDocument(url: url))
+        document.delegate = delegate
+        let page = try XCTUnwrap(document.page(at: 0) as? LatencyReportingPDFPage)
+        let tracker = LibraryPDFLatencyTracker.shared
+        tracker.reset()
+        tracker.selectionChanged(to: "measured")
+        tracker.expectFirstFrame(citekey: "measured", url: url)
+
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        let context = try XCTUnwrap(CGContext(
+            data: nil,
+            width: 240,
+            height: 240,
+            bitsPerComponent: 8,
+            bytesPerRow: 240 * 4,
+            space: colorSpace,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ))
+        page.draw(with: .mediaBox, to: context)
+        for _ in 0..<20 where tracker.sampleCount == 0 {
+            await Task.yield()
+        }
+
+        XCTAssertEqual(tracker.latestCitekey, "measured")
+        XCTAssertEqual(tracker.sampleCount, 1)
+        XCTAssertNotNil(tracker.latestMilliseconds)
+    }
+
+    @MainActor
     func testPDFDocumentCacheInvalidatesWhenFileChanges() async throws {
         let url = try makeImplicitBackgroundPDF()
         let view = PDFThumbnailSplitView(configuration: .previewLike)
@@ -401,6 +433,12 @@ final class PDFViewerTests: XCTestCase {
     private final class CountingPageDelegate: NSObject, PDFDocumentDelegate {
         func classForPage() -> AnyClass {
             CountingPDFPage.self
+        }
+    }
+
+    private final class LatencyPageDelegate: NSObject, PDFDocumentDelegate {
+        func classForPage() -> AnyClass {
+            LatencyReportingPDFPage.self
         }
     }
 

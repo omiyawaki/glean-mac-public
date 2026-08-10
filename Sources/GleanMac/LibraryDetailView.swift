@@ -8,21 +8,39 @@ final class LibraryDetailStore {
 
     var record: LibraryRecord?
     var isLoading: Bool = false
+    var isRefreshing: Bool = false
     var error: String?
     var loadedCitekey: String?
 
     private let loadRecord: LoadRecord
+    private let recordCache: LibraryRecordCacheStore
     private var loadGeneration = 0
 
-    init(endpoints: GleanBackendEndpoints = .home) {
+    init(
+        endpoints: GleanBackendEndpoints = .home,
+        recordCache: LibraryRecordCache = .default
+    ) {
         let recordLoader = LibraryRecordLoader(endpoints: endpoints)
         loadRecord = { citekey in
             try await recordLoader.load(citekey: citekey)
         }
+        self.recordCache = LibraryRecordCacheStore(cache: recordCache)
     }
 
-    init(loadRecord: @escaping LoadRecord) {
+    init(
+        recordCache: LibraryRecordCache = .default,
+        loadRecord: @escaping LoadRecord
+    ) {
         self.loadRecord = loadRecord
+        self.recordCache = LibraryRecordCacheStore(cache: recordCache)
+    }
+
+    func displayedRecord(for citekey: String?) -> LibraryRecord? {
+        guard let citekey else { return nil }
+        if loadedCitekey == citekey, let record {
+            return record
+        }
+        return recordCache.record(for: citekey)
     }
 
     func load(citekey: String?) async {
@@ -34,6 +52,7 @@ final class LibraryDetailStore {
             loadedCitekey = nil
             error = nil
             isLoading = false
+            isRefreshing = false
             return
         }
         if loadedCitekey == citekey, record != nil {
@@ -41,23 +60,39 @@ final class LibraryDetailStore {
             isLoading = false
             return
         }
+
+        let cachedRecord = recordCache.record(for: citekey)
+        if let cachedRecord {
+            record = cachedRecord
+            loadedCitekey = citekey
+            recordCache.touch(citekey)
+        }
         error = nil
-        isLoading = true
+        isLoading = cachedRecord == nil
+        isRefreshing = cachedRecord != nil
         defer {
             if loadGeneration == generation {
                 isLoading = false
+                isRefreshing = false
             }
         }
         do {
             let decoded = try await loadRecord(citekey)
             guard loadGeneration == generation, !Task.isCancelled else { return }
-            record = decoded
+            if record != decoded {
+                record = decoded
+            }
             loadedCitekey = citekey
             error = nil
+            recordCache.insert(decoded)
         } catch {
             guard loadGeneration == generation else { return }
             guard !Task.isCancelled, !(error is CancellationError) else { return }
-            self.error = error.localizedDescription
+            // A stale cached record is still fully usable. Keep it visible and
+            // treat a failed background refresh as nonblocking.
+            if cachedRecord == nil {
+                self.error = error.localizedDescription
+            }
         }
     }
 }
@@ -80,6 +115,10 @@ struct LibraryDetailView: View {
         pdfDarkModeOverride ?? (systemColorScheme == .dark)
     }
 
+    private var displayedRecord: LibraryRecord? {
+        store.displayedRecord(for: citekey)
+    }
+
     var body: some View {
         Group {
             if citekey == nil {
@@ -88,7 +127,7 @@ struct LibraryDetailView: View {
                     systemImage: "doc.text",
                     description: Text("Choose a paper from the list to read it.")
                 )
-            } else if store.loadedCitekey == citekey, let record = store.record {
+            } else if let record = displayedRecord {
                 pdfPane(for: record)
                     .navigationTitle(record.title)
                     .navigationSubtitle(authorYearLine(record))
@@ -118,7 +157,7 @@ struct LibraryDetailView: View {
                 .help(pdfDarkMode
                       ? "Render PDF with light page background"
                       : "Render PDF with dark page background (inverts colors)")
-                .disabled(store.record == nil)
+                .disabled(displayedRecord == nil)
             }
             ToolbarItem(placement: .primaryAction) {
                 Button {
@@ -151,7 +190,7 @@ struct LibraryDetailView: View {
                 }
                 .keyboardShortcut("i", modifiers: .command)
                 .help("Show metadata inspector")
-                .disabled(store.record == nil)
+                .disabled(displayedRecord == nil)
             }
             ToolbarSpacer()
             ToolbarItem(placement: .primaryAction) {
@@ -170,7 +209,7 @@ struct LibraryDetailView: View {
             }
         }
         .dropDestination(for: URL.self) { urls, _ in
-            let targetCitekey = store.record?.citekey ?? citekey
+            let targetCitekey = displayedRecord?.citekey ?? citekey
             return BacklogPDFDropRouting.enqueueForceAttach(
                 urls: urls,
                 citekey: targetCitekey,
@@ -182,7 +221,7 @@ struct LibraryDetailView: View {
     }
 
     private var openablePDFURL: URL? {
-        guard let record = store.record,
+        guard let record = displayedRecord,
               let url = pdfURL(for: record),
               FileManager.default.fileExists(atPath: url.path)
         else {
@@ -197,6 +236,7 @@ struct LibraryDetailView: View {
             if FileManager.default.fileExists(atPath: url.path) {
                 PDFViewer(
                     url: url,
+                    citekey: record.citekey,
                     darkMode: pdfDarkMode,
                     thumbnailSidebarVisible: thumbnailSidebarVisible
                 )

@@ -163,6 +163,17 @@ struct ContentView: View {
         )
     }
 
+    private var measuredLibrarySelectionBinding: Binding<String?> {
+        Binding(
+            get: { librarySelection },
+            set: { newValue in
+                guard librarySelection != newValue else { return }
+                LibraryPDFLatencyTracker.shared.selectionChanged(to: newValue)
+                librarySelection = newValue
+            }
+        )
+    }
+
     private func recomputeLibraryGroups(query: String? = nil) {
         libraryListState.update(
             entries: libraryStore.entries,
@@ -173,7 +184,7 @@ struct ContentView: View {
     private func revealLibraryPaper(_ citekey: String) {
         selection = .libraryAll
         syncedLibraryQueryBinding.wrappedValue = citekey
-        librarySelection = citekey
+        measuredLibrarySelectionBinding.wrappedValue = citekey
     }
 
     private func revealPendingLibraryPaper() {
@@ -188,7 +199,7 @@ struct ContentView: View {
         // Capture bindings so providers read live values on each request.
         let selectionBinding = $selection
         let backlogSelectionBinding = $backlogSelection
-        let librarySelectionBinding = $librarySelection
+        let librarySelectionBinding = measuredLibrarySelectionBinding
         let libraryQueryBinding = syncedLibraryQueryBinding
         let inspectorBinding = $inspectorPresented
 
@@ -226,9 +237,38 @@ struct ContentView: View {
             libraryDetail.loadedCitekey ?? ""
         }
         r.registerState(key: "libraryDetail.isLoading") { libraryDetail.isLoading }
+        r.registerState(key: "libraryDetail.isRefreshing") { libraryDetail.isRefreshing }
         r.registerState(key: "libraryDetail.error") { libraryDetail.error ?? "" }
         r.registerState(key: "libraryDetail.hasRecord") {
             libraryDetail.record != nil
+        }
+        let pdfLatency = LibraryPDFLatencyTracker.shared
+        r.registerState(key: "libraryPDFLatency.latestMs") {
+            pdfLatency.latestMilliseconds ?? -1
+        }
+        r.registerState(key: "libraryPDFLatency.latestCitekey") {
+            pdfLatency.latestCitekey ?? ""
+        }
+        r.registerState(key: "libraryPDFLatency.latestFrameSource") {
+            pdfLatency.latestFrameSource?.rawValue ?? ""
+        }
+        r.registerState(key: "libraryPDFLatency.p50Ms") {
+            pdfLatency.p50Milliseconds ?? -1
+        }
+        r.registerState(key: "libraryPDFLatency.p95Ms") {
+            pdfLatency.p95Milliseconds ?? -1
+        }
+        r.registerState(key: "libraryPDFLatency.sampleCount") {
+            pdfLatency.sampleCount
+        }
+        r.registerState(key: "libraryPDFLatency.cachedPreviewP50Ms") {
+            pdfLatency.cachedPreviewP50Milliseconds ?? -1
+        }
+        r.registerState(key: "libraryPDFLatency.cachedPreviewP95Ms") {
+            pdfLatency.cachedPreviewP95Milliseconds ?? -1
+        }
+        r.registerState(key: "libraryPDFLatency.cachedPreviewSampleCount") {
+            pdfLatency.cachedPreviewSampleCount
         }
         r.registerState(key: "actions.active") { actions.activeCount }
         r.registerState(key: "actions.failed") { actions.failedCount }
@@ -321,7 +361,7 @@ struct ContentView: View {
                                     kind: kind
                                 )
                             },
-                            selection: $librarySelection,
+                            selection: measuredLibrarySelectionBinding,
                             query: syncedLibraryQueryBinding)
                     .sidebarPane(.libraryAll, selection: selection)
             }
