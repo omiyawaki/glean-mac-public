@@ -11,3 +11,7 @@ glean.app/
 # Reproducible app-icon concept renders and review sheets. Keep their SVG and
 # Icon Composer sources under version control instead.
 Resources/AppIconConcepts/**/*.png
+
+# Local bytecode from reference-board validation.
+Resources/AppIconConcepts/**/__pycache__/
+Resources/AppIconConcepts/**/*.py[cod]
