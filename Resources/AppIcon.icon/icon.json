@@ -5,72 +5,14 @@
       "blur-material" : null,
       "layers" : [
         {
-          "glass" : false,
+          "glass" : true,
           "hidden" : false,
           "image-name-specializations" : [
             {
-              "value" : "03-veins.svg"
-            },
-            {
-              "appearance" : "dark",
-              "value" : "03-veins-dark.svg"
-            },
-            {
-              "appearance" : "tinted",
-              "value" : "03-veins-tinted.svg"
+              "value" : "00-leaf.svg"
             }
           ],
-          "name" : "Veins",
-          "position" : {
-            "scale" : 1,
-            "translation-in-points" : [
-              0,
-              0
-            ]
-          }
-        },
-        {
-          "glass" : false,
-          "hidden" : false,
-          "image-name-specializations" : [
-            {
-              "value" : "02-blade.svg"
-            },
-            {
-              "appearance" : "dark",
-              "value" : "02-blade-dark.svg"
-            },
-            {
-              "appearance" : "tinted",
-              "value" : "02-blade-tinted.svg"
-            }
-          ],
-          "name" : "Blade",
-          "position" : {
-            "scale" : 1,
-            "translation-in-points" : [
-              0,
-              0
-            ]
-          }
-        },
-        {
-          "glass" : false,
-          "hidden" : false,
-          "image-name-specializations" : [
-            {
-              "value" : "01-stem.svg"
-            },
-            {
-              "appearance" : "dark",
-              "value" : "01-stem-dark.svg"
-            },
-            {
-              "appearance" : "tinted",
-              "value" : "01-stem-tinted.svg"
-            }
-          ],
-          "name" : "Stem",
+          "name" : "Leaf",
           "position" : {
             "scale" : 1,
             "translation-in-points" : [
@@ -93,9 +35,6 @@
     }
   ],
   "supported-platforms" : {
-    "circles" : [
-      "watchOS"
-    ],
     "squares" : "shared"
   }
 }
