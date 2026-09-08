@@ -4,6 +4,8 @@ struct GleanBackendEndpoints: Equatable, Sendable {
     let intakeBase: URL
     let libraryBase: URL
 
+    /// Fleet production defaults (backend after 2026-09 Glean cutover).
+    /// Static name `home` kept for call-site compatibility.
     static let home = GleanBackendEndpoints(
         intakeBase: URL(string: "http://backend.example.com:8765")!,
         libraryBase: URL(string: "http://backend.example.com:8766")!
