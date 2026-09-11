@@ -27,6 +27,39 @@ final class IntakeActionsTests: XCTestCase {
         XCTAssertEqual(timeout, 660, accuracy: 0.001)
     }
 
+    func testSubmitDeletePaperPostsCitekeyDOIAndTitle() async throws {
+        let capture = RequestCapture()
+        MockURLProtocol.requestHandler = { request in
+            capture.path = request.url?.path
+            capture.operationID = request.value(forHTTPHeaderField: "X-Glean-Operation-ID")
+            capture.body = Self.bodyString(from: request)
+            return Self.ok(request: request)
+        }
+        let id = UUID(uuidString: "44444444-4444-4444-4444-444444444444")!
+        let operation = PendingOperation(
+            id: id,
+            createdAt: Date(timeIntervalSince1970: 0),
+            kind: .deletePaper(
+                citekey: "Miyawaki2024Attention",
+                doi: "10.1175/JCLI-D-23-0456.1",
+                title: "Attention and convection"
+            ),
+            status: .queued,
+            errorMessage: nil,
+            updatedAt: Date(timeIntervalSince1970: 0)
+        )
+
+        let result = try await IntakeActions.submit(operation)
+
+        XCTAssertEqual(result, .synced)
+        XCTAssertEqual(capture.path, "/api/library/delete")
+        XCTAssertEqual(capture.operationID, id.uuidString)
+        let body = try XCTUnwrap(capture.body)
+        XCTAssertTrue(body.contains("citekey=Miyawaki2024Attention"))
+        XCTAssertTrue(body.contains("doi=10.1175/JCLI-D-23-0456.1"))
+        XCTAssertTrue(body.contains("title=Attention"))
+    }
+
     func testSubmitReviewAddSendsOperationIDHeader() async throws {
         let capture = RequestCapture()
         MockURLProtocol.requestHandler = { request in

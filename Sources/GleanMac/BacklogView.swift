@@ -6,6 +6,7 @@ struct BacklogView: View {
     let offlineCoordinator: OfflineIntakeCoordinator
     let syncPendingOperations: () async -> Void
     let retryPDF: (BacklogEntry, Bool) async -> Void
+    let requestDelete: (LibraryDeleteRequest) -> Void
     @Binding var selection: String?
 
     var body: some View {
@@ -48,6 +49,9 @@ struct BacklogView: View {
                                            onTryFetchingPDF: {
                                                let isAlreadySelected = selection == entry.id
                                                Task { await retryPDF(entry, isAlreadySelected) }
+                                           },
+                                           onDeleteFromLibrary: {
+                                               requestDelete(LibraryDeleteRequest(entry: entry))
                                            })
                                     .tag(entry.id)
                             }
@@ -102,6 +106,7 @@ private struct BacklogRow: View {
     let entry: BacklogEntry
     let onDropPDFs: ([URL]) -> Void
     let onTryFetchingPDF: () -> Void
+    let onDeleteFromLibrary: () -> Void
     @State private var isDropTargeted = false
 
     var body: some View {
@@ -149,6 +154,15 @@ private struct BacklogRow: View {
                       systemImage: BacklogPDFManualFetchPresentation.systemImage)
             }
             .disabled(!BacklogPDFManualFetchPresentation.isAvailable(for: entry))
+
+            Divider()
+
+            Button(role: .destructive) {
+                onDeleteFromLibrary()
+            } label: {
+                Label(LibraryDeleteAction.menuTitle,
+                      systemImage: LibraryDeleteAction.systemImage)
+            }
         }
         .dropDestination(for: URL.self) { urls, _ in
             onDropPDFs(urls)

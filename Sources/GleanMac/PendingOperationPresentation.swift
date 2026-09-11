@@ -65,6 +65,8 @@ enum PendingOperationPresentation {
             return ("Match PDF", filename, "doc.viewfinder")
         case .addPaper(let input, _):
             return ("Add paper", input, "doc.badge.plus")
+        case .deletePaper(let citekey, _, _):
+            return ("Delete from Library", citekey, "trash")
         }
     }
 

@@ -41,6 +41,7 @@ struct LibraryView: View {
     let syncPendingOperations: () async -> Void
     let loadedRecord: LibraryRecord?
     let showRelations: (LibraryEntry, LibraryRelationKind) -> Void
+    let requestDelete: (LibraryDeleteRequest) -> Void
     @Binding var selection: String?
     @Binding var query: String
     @State private var allScrollController = IndexedNativeScrollController()
@@ -143,6 +144,9 @@ struct LibraryView: View {
                                        onDropPDFs: { urls in
                                            enqueueForceAttach(urls: urls,
                                                               citekey: entry.citekey)
+                                       },
+                                       onDeleteFromLibrary: {
+                                           requestDelete(LibraryDeleteRequest(entry: entry))
                                        })
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .background {
@@ -274,6 +278,7 @@ private struct LibraryRow: View {
     let reportActionError: (String) -> Void
     let onDoubleClick: () -> Void
     let onDropPDFs: ([URL]) -> Bool
+    let onDeleteFromLibrary: () -> Void
     @State private var isDropTargeted = false
 
     /// Fixed-height rows keep search-clear from triggering thousands of
@@ -415,6 +420,15 @@ private struct LibraryRow: View {
                 } label: {
                     Label(kind.menuTitle, systemImage: kind.systemImage)
                 }
+            }
+
+            Divider()
+
+            Button(role: .destructive) {
+                onDeleteFromLibrary()
+            } label: {
+                Label(LibraryDeleteAction.menuTitle,
+                      systemImage: LibraryDeleteAction.systemImage)
             }
         }
         .simultaneousGesture(

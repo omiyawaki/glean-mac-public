@@ -9,6 +9,7 @@ struct PendingOperation: Codable, Equatable, Identifiable, Sendable {
         case authorDismiss(author: String)
         case attachPDF(stagedFilePath: String, citekey: String?)
         case addPaper(input: String, stagedPDFPath: String?)
+        case deletePaper(citekey: String, doi: String, title: String)
     }
 
     enum Status: String, Codable, Equatable, Sendable {
@@ -311,7 +312,7 @@ private extension PendingOperation {
             return stagedFilePath
         case .addPaper(_, let stagedPDFPath):
             return stagedPDFPath
-        case .reviewAdd, .reviewSkip, .authorFollow, .authorDismiss:
+        case .reviewAdd, .reviewSkip, .authorFollow, .authorDismiss, .deletePaper:
             return nil
         }
     }

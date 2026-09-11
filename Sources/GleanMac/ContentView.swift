@@ -53,6 +53,7 @@ struct ContentView: View {
     @State private var syncWorker: PendingOperationSyncWorker?
     @State private var eventStream: EventStream?
     @State private var addPaperController = AddPaperController()
+    @State private var pendingLibraryDelete: LibraryDeleteRequest?
 
     private static let eventsURL = GleanBackendEndpoints.home.eventsURL
     private let backlogPDFManualFetcher = BacklogPDFManualFetcher()
@@ -78,6 +79,21 @@ struct ContentView: View {
                     pendingLibraryRevealCitekey = citekey
                 }
             )
+        }
+        .confirmationDialog(
+            LibraryDeleteAction.confirmationTitle,
+            isPresented: Binding(
+                get: { pendingLibraryDelete != nil },
+                set: { if !$0 { pendingLibraryDelete = nil } }
+            ),
+            titleVisibility: .visible,
+            presenting: pendingLibraryDelete
+        ) { request in
+            Button(LibraryDeleteAction.confirmButtonTitle, role: .destructive) {
+                performLibraryDelete(request)
+            }
+        } message: { request in
+            Text(LibraryDeleteAction.confirmationMessage(for: request))
         }
         .toolbar {
             // Use the ToolbarContent wrapper (matches the Laps app and the
@@ -394,6 +410,7 @@ struct ContentView: View {
                                     kind: kind
                                 )
                             },
+                            requestDelete: { pendingLibraryDelete = $0 },
                             selection: measuredLibrarySelectionBinding,
                             query: syncedLibraryQueryBinding)
                     .sidebarPane(.libraryAll, selection: selection)
@@ -404,6 +421,7 @@ struct ContentView: View {
                             offlineCoordinator: offlineCoordinator,
                             syncPendingOperations: syncPendingOperations,
                             retryPDF: retryBacklogPDF,
+                            requestDelete: { pendingLibraryDelete = $0 },
                             selection: $backlogSelection)
                     .sidebarPane(.backlog, selection: selection)
             }
@@ -594,6 +612,67 @@ struct ContentView: View {
 
     private var offlineCoordinator: OfflineIntakeCoordinator {
         OfflineIntakeCoordinator(operationStore: operationStore)
+    }
+
+    private func performLibraryDelete(_ request: LibraryDeleteRequest) {
+        let citekey = request.citekey
+        let backlogIDs = request.backlogIDs
+        libraryStore.optimisticallyRemove(id: citekey)
+        for backlogID in backlogIDs {
+            backlogStore.optimisticallyRemove(id: backlogID)
+        }
+        if librarySelection == citekey {
+            librarySelection = nil
+        }
+        if let selectedBacklogID = backlogSelection,
+           backlogIDs.contains(selectedBacklogID) {
+            backlogSelection = nil
+        }
+
+        actionQueue.enqueue(
+            title: LibraryDeleteAction.menuTitle,
+            detail: request.displayTitle,
+            systemImage: LibraryDeleteAction.systemImage
+        ) {
+            libraryStore.optimisticallyRemove(id: citekey)
+            for backlogID in backlogIDs {
+                backlogStore.optimisticallyRemove(id: backlogID)
+            }
+            do {
+                let operation = try await offlineCoordinator.queueDeletePaper(
+                    citekey: citekey,
+                    doi: request.normalizedDOI,
+                    title: request.displayTitle
+                )
+                let terminalState = await syncPendingOperation(operation.id)
+                switch terminalState {
+                case .synced:
+                    break
+                case .failed(let message), .needsReview(let message):
+                    libraryStore.releaseOptimisticRemoval(id: citekey)
+                    for backlogID in backlogIDs {
+                        backlogStore.releaseOptimisticRemoval(id: backlogID)
+                    }
+                    async let libraryReload: Void = libraryStore.load(silent: true)
+                    async let backlogReload: Void = backlogStore.load(silent: true)
+                    _ = await (libraryReload, backlogReload)
+                    throw IntakeActions.ActionError.server(message)
+                }
+
+                async let libraryReload: Void = libraryStore.loadAfterLocalMutation(silent: true)
+                async let backlogReload: Void = backlogStore.loadAfterLocalMutation(silent: true)
+                _ = await (libraryReload, backlogReload)
+            } catch {
+                libraryStore.releaseOptimisticRemoval(id: citekey)
+                for backlogID in backlogIDs {
+                    backlogStore.releaseOptimisticRemoval(id: backlogID)
+                }
+                async let libraryReload: Void = libraryStore.load(silent: true)
+                async let backlogReload: Void = backlogStore.load(silent: true)
+                _ = await (libraryReload, backlogReload)
+                throw error
+            }
+        }
     }
 
     private func retryBacklogPDF(_ entry: BacklogEntry, isAlreadySelected: Bool) async {

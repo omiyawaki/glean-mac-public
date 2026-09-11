@@ -62,4 +62,17 @@ struct OfflineIntakeCoordinator {
             .addPaper(input: normalizedInput, stagedPDFPath: stagedPDFPath)
         )
     }
+
+    @discardableResult
+    func queueDeletePaper(citekey: String,
+                          doi: String? = nil,
+                          title: String? = nil) async throws -> PendingOperation {
+        try await operationStore.enqueue(
+            .deletePaper(
+                citekey: citekey.trimmingCharacters(in: .whitespacesAndNewlines),
+                doi: doi?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "",
+                title: title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            )
+        )
+    }
 }

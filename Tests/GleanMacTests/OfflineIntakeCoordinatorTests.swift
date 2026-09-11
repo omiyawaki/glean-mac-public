@@ -32,6 +32,27 @@ final class OfflineIntakeCoordinatorTests: XCTestCase {
         }
     }
 
+    func testQueueDeletePaperRecordsCitekeyAndDOI() async throws {
+        let store = PendingOperationStore(url: tempURL())
+        let coordinator = OfflineIntakeCoordinator(operationStore: store)
+
+        let operation = try await coordinator.queueDeletePaper(
+            citekey: " Miyawaki2024Attention ",
+            doi: " 10.1175/JCLI-D-23-0456.1 ",
+            title: " Attention and convection "
+        )
+
+        XCTAssertEqual(
+            operation.kind,
+            .deletePaper(
+                citekey: "Miyawaki2024Attention",
+                doi: "10.1175/JCLI-D-23-0456.1",
+                title: "Attention and convection"
+            )
+        )
+        XCTAssertEqual(store.pendingOperations.map(\.id), [operation.id])
+    }
+
     func testQueueReviewAddRecordsOperationWithoutServerCall() async throws {
         let store = PendingOperationStore(url: tempURL())
         let coordinator = OfflineIntakeCoordinator(operationStore: store)

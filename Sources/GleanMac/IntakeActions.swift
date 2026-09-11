@@ -88,6 +88,11 @@ enum IntakeActions {
                                      citekey: nil,
                                      operationID: operation.id)
                 }
+            case .deletePaper(let citekey, let doi, let title):
+                try await deletePaper(citekey: citekey,
+                                      doi: doi,
+                                      title: title,
+                                      operationID: operation.id)
             }
             return .synced
         } catch ActionError.needsReview(let message) {
@@ -128,6 +133,22 @@ enum IntakeActions {
     static func authorDismiss(author: String, operationID: UUID? = nil) async throws {
         try await post(path: "/api/author/dismiss",
                        form: ["author": author],
+                       operationID: operationID)
+    }
+
+    static func deletePaper(citekey: String,
+                            doi: String = "",
+                            title: String = "",
+                            operationID: UUID? = nil) async throws {
+        var form = ["citekey": citekey]
+        if !doi.isEmpty {
+            form["doi"] = doi
+        }
+        if !title.isEmpty {
+            form["title"] = title
+        }
+        try await post(path: "/api/library/delete",
+                       form: form,
                        operationID: operationID)
     }
 

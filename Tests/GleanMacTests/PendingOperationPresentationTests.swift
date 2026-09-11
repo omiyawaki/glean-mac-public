@@ -2,6 +2,29 @@ import XCTest
 @testable import GleanMac
 
 final class PendingOperationPresentationTests: XCTestCase {
+    func testRowsDescribeQueuedDeletePaperOperation() {
+        let operation = PendingOperation(
+            id: UUID(),
+            createdAt: Date(timeIntervalSince1970: 0),
+            kind: .deletePaper(
+                citekey: "Miyawaki2024Attention",
+                doi: "10.1175/JCLI-D-23-0456.1",
+                title: "Attention and convection"
+            ),
+            status: .queued,
+            errorMessage: nil,
+            updatedAt: Date(timeIntervalSince1970: 0)
+        )
+
+        let row = PendingOperationPresentation.row(for: operation)
+
+        XCTAssertEqual(row.title, "Delete from Library")
+        XCTAssertEqual(row.detail, "Miyawaki2024Attention")
+        XCTAssertEqual(row.statusText, "Waiting to sync")
+        XCTAssertEqual(row.systemImage, "trash")
+        XCTAssertFalse(row.canChooseTarget)
+    }
+
     func testRowsDescribeQueuedAddPaperOperation() {
         let operation = PendingOperation(
             id: UUID(),
