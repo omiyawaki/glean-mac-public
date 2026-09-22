@@ -49,6 +49,18 @@ final class GleanBackendEndpointsTests: XCTestCase {
             endpoints.graphStatusURL.absoluteString,
             "http://backend.example.com:8766/api/graph/status"
         )
+        XCTAssertEqual(
+            endpoints.libraryAttachmentPlanURL(citekey: "Namias1966Nature").absoluteString,
+            "http://backend.example.com:8766/api/papers/Namias1966Nature/attachment-plan"
+        )
+        XCTAssertEqual(
+            endpoints.libraryAttachmentCommitURL(citekey: "Namias1966Nature").absoluteString,
+            "http://backend.example.com:8766/api/papers/Namias1966Nature/attachment-commit"
+        )
+        XCTAssertEqual(
+            endpoints.libraryPDFURL(citekey: "Namias1966Nature").absoluteString,
+            "http://backend.example.com:8766/api/papers/Namias1966Nature/pdf"
+        )
     }
 
     func testDetailCitekeyIsEncodedAsOnePathComponent() {

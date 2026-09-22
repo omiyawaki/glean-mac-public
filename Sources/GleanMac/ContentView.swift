@@ -149,6 +149,9 @@ struct ContentView: View {
                     _ = await (a, b, c)
                 case "library-changed":
                     await library.load(silent: true)
+                    await libraryDetailStore.refresh(
+                        citekey: libraryDetailStore.loadedCitekey
+                    )
                 default:
                     break
                 }

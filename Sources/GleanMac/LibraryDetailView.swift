@@ -95,6 +95,41 @@ final class LibraryDetailStore {
             }
         }
     }
+
+    func refresh(citekey: String?) async {
+        loadGeneration &+= 1
+        let generation = loadGeneration
+        guard let citekey else {
+            record = nil
+            loadedCitekey = nil
+            error = nil
+            isLoading = false
+            isRefreshing = false
+            return
+        }
+        isRefreshing = record != nil
+        isLoading = record == nil
+        defer {
+            if loadGeneration == generation {
+                isLoading = false
+                isRefreshing = false
+            }
+        }
+        do {
+            let decoded = try await loadRecord(citekey)
+            guard loadGeneration == generation, !Task.isCancelled else { return }
+            record = decoded
+            loadedCitekey = citekey
+            error = nil
+            recordCache.insert(decoded)
+        } catch {
+            guard loadGeneration == generation else { return }
+            guard !Task.isCancelled, !(error is CancellationError) else { return }
+            if record == nil {
+                self.error = error.localizedDescription
+            }
+        }
+    }
 }
 
 struct LibraryDetailView: View {
@@ -109,6 +144,7 @@ struct LibraryDetailView: View {
     @State private var pdfDarkModeOverride: Bool?
     @State private var thumbnailSidebarVisible = true
     @State private var isDropTargeted = false
+    @State private var materializedPDF: LibraryPDFAvailability?
     @Environment(\.colorScheme) private var systemColorScheme
 
     private var pdfDarkMode: Bool {
@@ -200,6 +236,11 @@ struct LibraryDetailView: View {
         .task(id: citekey) {
             await store.load(citekey: citekey)
         }
+        .task(id: pdfMaterializeKey) {
+            materializedPDF = nil
+            guard let record = displayedRecord else { return }
+            materializedPDF = await LibraryPDFMaterializer.system.prepare(record: record)
+        }
         .overlay {
             if isDropTargeted {
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
@@ -215,7 +256,10 @@ struct LibraryDetailView: View {
                 citekey: targetCitekey,
                 actionQueue: actionQueue,
                 offlineCoordinator: offlineCoordinator,
-                syncPendingOperations: syncPendingOperations
+                syncPendingOperations: syncPendingOperations,
+                onPlaced: {
+                    await store.refresh(citekey: targetCitekey)
+                }
             )
         } isTargeted: { isDropTargeted = $0 }
     }
@@ -230,35 +274,58 @@ struct LibraryDetailView: View {
         return url
     }
 
+    private var pdfMaterializeKey: String {
+        let record = displayedRecord
+        let path = record?.attachments.first(where: { $0.kind == "main" })?.path
+            ?? record?.attachments.first?.path
+            ?? ""
+        return "\(citekey ?? "")|\(path)"
+    }
+
     @ViewBuilder
     private func pdfPane(for record: LibraryRecord) -> some View {
-        if let url = pdfURL(for: record) {
-            if FileManager.default.fileExists(atPath: url.path) {
-                PDFViewer(
-                    url: url,
-                    citekey: record.citekey,
-                    darkMode: pdfDarkMode,
-                    thumbnailSidebarVisible: thumbnailSidebarVisible
-                )
-            } else {
-                ContentUnavailableView {
-                    Label("PDF not downloaded", systemImage: "icloud.and.arrow.down")
-                } description: {
-                    Text("This file is stored in iCloud and hasn't synced to this Mac yet. Open it in Finder to trigger a download.")
-                } actions: {
+        switch pdfAvailability(for: record) {
+        case .ready(let url):
+            PDFViewer(
+                url: url,
+                citekey: record.citekey,
+                darkMode: pdfDarkMode,
+                thumbnailSidebarVisible: thumbnailSidebarVisible
+            )
+        case .downloadingFromICloud, .unavailable:
+            ContentUnavailableView {
+                Label("PDF not downloaded", systemImage: "icloud.and.arrow.down")
+            } description: {
+                Text("This file is stored in iCloud and hasn't synced to this Mac yet. Open it in Finder to trigger a download.")
+            } actions: {
+                if let url = pdfURL(for: record) {
                     Button("Reveal in Finder") {
                         NSWorkspace.shared.activateFileViewerSelecting([url])
                     }
                     .buttonStyle(.glassProminent)
                 }
             }
-        } else {
+        case .noAttachment:
             ContentUnavailableView(
                 "No PDF attached",
                 systemImage: "doc",
                 description: Text("This record has no PDF attachment.")
             )
         }
+    }
+
+    private func pdfAvailability(for record: LibraryRecord) -> LibraryPDFAvailability {
+        if let materializedPDF, case .ready = materializedPDF {
+            return materializedPDF
+        }
+        if let url = pdfURL(for: record),
+           LibraryPDFMaterializer.isReadablePDF(url) {
+            return .ready(url)
+        }
+        if record.attachments.isEmpty {
+            return .noAttachment
+        }
+        return materializedPDF ?? .unavailable
     }
 
     private func pdfURL(for record: LibraryRecord) -> URL? {

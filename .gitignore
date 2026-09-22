@@ -6,6 +6,7 @@ DerivedData/
 dist/
 build/visual-qa/
 .DS_Store
+.agents/
 glean.app/
 
 # Reproducible app-icon concept renders stay untracked. Gate review boards are

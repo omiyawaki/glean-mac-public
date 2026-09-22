@@ -89,6 +89,22 @@ final class LibraryDetailStoreTests: XCTestCase {
         XCTAssertNil(store.error)
     }
 
+    @MainActor
+    func testRefreshReplacesAnAlreadyLoadedRecord() async throws {
+        var title = "before"
+        let store = LibraryDetailStore(recordCache: temporaryCache()) { citekey in
+            self.makeRecord(citekey: citekey, title: title)
+        }
+        await store.load(citekey: "Namias1966Nature")
+        title = "after"
+
+        await store.load(citekey: "Namias1966Nature")
+        XCTAssertEqual(store.record?.title, "before")
+
+        await store.refresh(citekey: "Namias1966Nature")
+        XCTAssertEqual(store.record?.title, "after")
+    }
+
     private func temporaryCache() -> LibraryRecordCache {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)

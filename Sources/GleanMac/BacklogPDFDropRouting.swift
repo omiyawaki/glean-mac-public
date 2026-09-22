@@ -31,7 +31,8 @@ enum BacklogPDFDropRouting {
         citekey: String?,
         actionQueue: ActionQueueStore,
         offlineCoordinator: OfflineIntakeCoordinator,
-        syncPendingOperations: @escaping () async -> Void
+        syncPendingOperations: @escaping () async -> Void,
+        onPlaced: @escaping @MainActor () async -> Void = {}
     ) -> Bool {
         guard let citekey = forceAttachCitekey(citekey) else { return false }
         let pdfs = pdfURLs(from: urls)
@@ -41,14 +42,22 @@ enum BacklogPDFDropRouting {
                 detail: url.lastPathComponent,
                 systemImage: "doc.richtext",
                 operation: {
-                    try await offlineCoordinator.queueAttachPDF(url, citekey: citekey)
+                    _ = try await offlineCoordinator.placeAttachmentInICloud(
+                        url,
+                        citekey: citekey
+                    )
                     PDFSourceCleaner.system.trashSourcePDF(url)
                     await syncPendingOperations()
+                    await onPlaced()
                 },
                 forceAttach: { altCitekey in
-                    try await offlineCoordinator.queueAttachPDF(url, citekey: altCitekey)
+                    _ = try await offlineCoordinator.placeAttachmentInICloud(
+                        url,
+                        citekey: altCitekey
+                    )
                     PDFSourceCleaner.system.trashSourcePDF(url)
                     await syncPendingOperations()
+                    await onPlaced()
                 }
             )
         }

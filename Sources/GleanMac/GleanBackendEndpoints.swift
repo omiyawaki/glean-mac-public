@@ -45,6 +45,22 @@ struct GleanBackendEndpoints: Equatable, Sendable {
         libraryPaperURL(citekey: citekey, suffix: "references/retry")
     }
 
+    func libraryAttachmentPlanURL(citekey: String) -> URL {
+        libraryPaperURL(citekey: citekey, suffix: "attachment-plan")
+    }
+
+    func libraryAttachmentCommitURL(citekey: String) -> URL {
+        libraryPaperURL(citekey: citekey, suffix: "attachment-commit")
+    }
+
+    func libraryAttachmentReleaseURL(citekey: String) -> URL {
+        libraryPaperURL(citekey: citekey, suffix: "attachment-release")
+    }
+
+    func libraryPDFURL(citekey: String) -> URL {
+        libraryPaperURL(citekey: citekey, suffix: "pdf")
+    }
+
     var graphStatusURL: URL {
         libraryURL(path: "api/graph/status")
     }

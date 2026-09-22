@@ -5,13 +5,16 @@ struct OfflineIntakeCoordinator {
     let operationStore: PendingOperationStore
     let pdfStager: PendingPDFStager
     let signalExtractor: LocalPaperSignalExtractor
+    let attachmentPlacer: ICloudAttachmentPlacer
 
     init(operationStore: PendingOperationStore,
          pdfStager: PendingPDFStager = .default,
-         signalExtractor: LocalPaperSignalExtractor = .default) {
+         signalExtractor: LocalPaperSignalExtractor = .default,
+         attachmentPlacer: ICloudAttachmentPlacer = .system) {
         self.operationStore = operationStore
         self.pdfStager = pdfStager
         self.signalExtractor = signalExtractor
+        self.attachmentPlacer = attachmentPlacer
     }
 
     @discardableResult
@@ -32,6 +35,12 @@ struct OfflineIntakeCoordinator {
     @discardableResult
     func queueAuthorDismiss(author: String) async throws -> PendingOperation {
         try await operationStore.enqueue(.authorDismiss(author: author))
+    }
+
+    func placeAttachmentInICloud(_ source: URL, citekey: String) async throws -> URL {
+        let staged = try await pdfStager.stage(source)
+        defer { try? FileManager.default.removeItem(at: staged) }
+        return try await attachmentPlacer.place(stagedPDF: staged, citekey: citekey)
     }
 
     @discardableResult
