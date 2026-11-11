@@ -131,6 +131,11 @@ private struct ActionQueuePopover: View {
                                             )
                                             await syncPendingOperations?()
                                         }
+                                    },
+                                    dismiss: {
+                                        Task {
+                                            try? await pendingStore?.remove(id: row.id)
+                                        }
                                     }
                                 )
                             }
@@ -278,6 +283,7 @@ private struct PendingOperationRow: View {
     let row: PendingOperationPresentation.Row
     let backlogEntries: [BacklogEntry]
     let chooseTarget: (String) -> Void
+    let dismiss: () -> Void
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
@@ -322,6 +328,15 @@ private struct PendingOperationRow: View {
                 .menuIndicator(.hidden)
                 .fixedSize()
                 .help("Choose target paper")
+            }
+
+            if row.status == .failed || row.status == .needsReview {
+                Button(action: dismiss) {
+                    Image(systemName: "xmark")
+                        .actionQueueIconStyle()
+                }
+                .buttonStyle(.borderless)
+                .help("Dismiss")
             }
         }
         .padding(.vertical, 5)

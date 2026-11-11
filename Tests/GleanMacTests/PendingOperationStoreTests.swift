@@ -95,6 +95,34 @@ final class PendingOperationStoreTests: XCTestCase {
         XCTAssertNil(store.operations.first?.errorMessage)
     }
 
+    func testRemoveDropsOperationAndManagedStagedPDF() async throws {
+        let pendingPDFDirectory = tempDirectory()
+        let stagedPDF = pendingPDFDirectory.appendingPathComponent("staged.pdf")
+        try FileManager.default.createDirectory(
+            at: pendingPDFDirectory,
+            withIntermediateDirectories: true
+        )
+        try Data("%PDF-1.7\ndismiss".utf8).write(to: stagedPDF)
+        let url = tempURL()
+        let store = PendingOperationStore(
+            url: url,
+            managedPendingPDFDirectory: pendingPDFDirectory
+        )
+        let operation = try await store.enqueue(
+            .attachPDF(stagedFilePath: stagedPDF.path,
+                       citekey: "Abdi2026Hrrrcast")
+        )
+        try await store.markNeedsReview(id: operation.id, message: "not found")
+
+        try await store.remove(id: operation.id)
+
+        XCTAssertTrue(store.operations.isEmpty)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: stagedPDF.path))
+        let reloaded = PendingOperationStore(url: url)
+        try await reloaded.load()
+        XCTAssertTrue(reloaded.operations.isEmpty)
+    }
+
     func testMarkSyncedRemovesOperationAndManagedStagedPDF() async throws {
         let pendingPDFDirectory = tempDirectory()
         let stagedPDF = pendingPDFDirectory.appendingPathComponent("staged.pdf")

@@ -13,6 +13,8 @@ enum PendingOperationTerminalState: Equatable, Sendable {
 
 @MainActor
 final class PendingOperationSyncWorker {
+    static let missingStagedFileMessage = "The staged PDF is no longer on disk."
+
     typealias Submit = @MainActor (PendingOperation) async throws -> PendingOperationSyncResult
 
     private let store: PendingOperationStore
@@ -93,6 +95,13 @@ final class PendingOperationSyncWorker {
             olderThan: staleRunningInterval
         )
         for operation in store.pendingOperations {
+            if store.stagedFileMissing(for: operation) {
+                try? await store.markNeedsReview(
+                    id: operation.id,
+                    message: Self.missingStagedFileMessage
+                )
+                continue
+            }
             do {
                 try await store.markRunning(id: operation.id)
                 switch try await submit(operation) {

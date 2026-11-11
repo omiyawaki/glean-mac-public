@@ -18,6 +18,34 @@ final class PendingOperationSyncWorkerTests: XCTestCase {
         XCTAssertFalse(store.operations.contains { $0.id == operation.id })
     }
 
+    func testSyncParksMissingStagedPDFWithoutSubmitting() async throws {
+        let store = PendingOperationStore(url: tempURL())
+        let missingPDF = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("pdf")
+        let operation = try await store.enqueue(
+            .attachPDF(stagedFilePath: missingPDF.path,
+                       citekey: "Abatzoglou2021Compound")
+        )
+        try await store.markFailed(id: operation.id, message: "The file doesn’t exist.")
+        var submitCount = 0
+        let worker = PendingOperationSyncWorker(store: store) { _ in
+            submitCount += 1
+            return .synced
+        }
+
+        await worker.syncPending()
+
+        XCTAssertEqual(submitCount, 0)
+        XCTAssertEqual(store.operations.first?.status, .needsReview)
+        XCTAssertEqual(
+            store.operations.first?.errorMessage,
+            PendingOperationSyncWorker.missingStagedFileMessage
+        )
+        XCTAssertEqual(store.pendingOperations.map(\.id), [])
+        XCTAssertEqual(store.operations.first?.id, operation.id)
+    }
+
     func testSyncRetriesFailedOperation() async throws {
         let store = PendingOperationStore(url: tempURL())
         let operation = try await store.enqueue(.authorFollow(author: "Miyawaki"))

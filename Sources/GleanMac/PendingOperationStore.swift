@@ -166,8 +166,16 @@ final class PendingOperationStore {
     }
 
     func remove(id: UUID) async throws {
+        if let operation = operations.first(where: { $0.id == id }) {
+            removeStagedFile(for: operation)
+        }
         operations.removeAll { $0.id == id }
         try await save()
+    }
+
+    func stagedFileMissing(for operation: PendingOperation) -> Bool {
+        guard let path = operation.stagedFilePath else { return false }
+        return !FileManager.default.fileExists(atPath: path)
     }
 
     func assignAttachTarget(id: UUID, citekey: String) async throws {
