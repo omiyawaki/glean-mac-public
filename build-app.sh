@@ -8,7 +8,6 @@ cd "$REPO"
 
 CONFIG="${CONFIG:-debug}"
 APP="$HOME/Applications/Glean.app"
-BIN="$REPO/.build/arm64-apple-macosx/$CONFIG/GleanMac"
 LEGACY_APP="$HOME/Applications/glean.app"
 
 # Package.swift declares the apple-app-tools dependency as `.package(path:
@@ -34,6 +33,14 @@ fi
 
 echo "Building (configuration: ${CONFIG})..."
 swift build -c "$CONFIG"
+# SwiftPM's build layout is .build/<config> or .build/out/Products/<Config>.
+# Ask the tool instead of hard-coding the old triple directory, which can
+# still hold a stale binary after the layout changes.
+BIN="$(swift build -c "$CONFIG" --show-bin-path)/GleanMac"
+if [[ ! -x "$BIN" ]]; then
+    echo "built binary not found at $BIN" >&2
+    exit 1
+fi
 
 echo "Wrapping in app bundle at ${APP}..."
 # Drop the lowercase legacy bundle if it's a distinct artifact from any
