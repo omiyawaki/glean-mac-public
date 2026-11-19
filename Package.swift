@@ -5,14 +5,14 @@ let package = Package(
     name: "GleanMac",
     platforms: [.macOS(.v26)],
     dependencies: [
-        .package(path: "../apple-app-tools")
+        .package(url: "https://github.com/omiyawaki/apple-app-tools-public.git", branch: "main")
     ],
     targets: [
         .executableTarget(
             name: "GleanMac",
             dependencies: [
-                .product(name: "AppleAppDesignSystem", package: "apple-app-tools"),
-                .product(name: "LocalAppUpdateKit", package: "apple-app-tools")
+                .product(name: "AppleAppDesignSystem", package: "apple-app-tools-public"),
+                .product(name: "LocalAppUpdateKit", package: "apple-app-tools-public")
             ],
             path: "Sources/GleanMac",
             resources: [

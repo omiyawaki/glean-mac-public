@@ -141,7 +141,7 @@ struct LibraryReferenceEmptyPresentation: Equatable, Sendable {
         case .queued:
             (title, description, systemImage) = (
                 "Queued for indexing",
-                "References will be fetched by the home Glean service.",
+                "References will be fetched by the backend Glean service.",
                 "clock"
             )
         case .running:
@@ -184,7 +184,7 @@ struct LibraryReferenceEmptyPresentation: Equatable, Sendable {
         case .unknown:
             (title, description, systemImage) = (
                 "No offline references found",
-                "The home service is unavailable, and the local index cannot distinguish an empty graph from one that has not been indexed.",
+                "The backend service is unavailable, and the local index cannot distinguish an empty graph from one that has not been indexed.",
                 "text.book.closed"
             )
         }
@@ -237,7 +237,7 @@ struct LibraryRelationsClient: Sendable {
     static let `default` = LibraryRelationsClient()
 
     init(
-        endpoints: GleanBackendEndpoints = .home,
+        endpoints: GleanBackendEndpoints = .configured,
         session: URLSession = .shared,
         localReader: LocalLibraryGraphReader = .default
     ) {
@@ -302,7 +302,7 @@ struct LibraryRelationsClient: Sendable {
             case .httpStatus(let status):
                 "Glean returned HTTP \(status)."
             case .remoteAndLocal(let remote, let local):
-                "The home Glean service was unavailable (\(remote)), and the offline index couldn't be read (\(local))."
+                "The backend Glean service was unavailable (\(remote)), and the offline index couldn't be read (\(local))."
             }
         }
     }

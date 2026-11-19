@@ -2,9 +2,9 @@ import Foundation
 
 /// Small, local-only cache for complete library records. The list endpoint
 /// intentionally omits attachment paths, so without this cache every paper
-/// selection has to wait for the home API before the PDF view can be built.
+/// selection has to wait for the backend API before the PDF view can be built.
 ///
-/// Records remain authoritative on the home service. This cache only enables
+/// Records remain authoritative on the backend service. This cache only enables
 /// stale-while-revalidate display and is safe to delete or rebuild at any time.
 struct LibraryRecordCache {
     struct Entry: Codable {

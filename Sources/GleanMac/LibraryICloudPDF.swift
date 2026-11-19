@@ -31,7 +31,7 @@ struct LibraryAttachmentClient {
     static let system = LibraryAttachmentClient()
 
     init(
-        endpoints: GleanBackendEndpoints = .home,
+        endpoints: GleanBackendEndpoints = .configured,
         session: URLSession = .shared
     ) {
         self.endpoints = endpoints

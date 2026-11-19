@@ -10,24 +10,14 @@ CONFIG="${CONFIG:-debug}"
 APP="$HOME/Applications/Glean.app"
 LEGACY_APP="$HOME/Applications/glean.app"
 
-# Package.swift declares the apple-app-tools dependency as `.package(path:
-# "../apple-app-tools")`, which is relative to REPO. The canonical
-# checkout lives at ~/tools/apple-app-tools, so that path resolves when
-# REPO is ~/tools/glean-mac, but auto-deploy invokes us from a worktree
-# under ~/.apple-app-tools/deploy-checkouts/glean-mac/ where the sibling
-# directory doesn't exist. If the sibling is missing, drop a temporary
-# symlink to the canonical location and clean it up on exit.
-SIBLING="$REPO/../apple-app-tools"
-SIBLING_CANONICAL="$HOME/tools/apple-app-tools"
-SIBLING_SYMLINK=""
-if [[ ! -e "$SIBLING" && -d "$SIBLING_CANONICAL" ]]; then
-    ln -s "$SIBLING_CANONICAL" "$SIBLING"
-    SIBLING_SYMLINK="$SIBLING"
-    trap 'rm -f "$SIBLING_SYMLINK"' EXIT
-fi
-TOOLS_REPO="${APPLE_APP_TOOLS_REPO:-$SIBLING_CANONICAL}"
+# Package.swift pulls apple-app-tools from its remote repository for the
+# library targets. The packaging step below runs the `apple-app-tools` CLI
+# from a local checkout; point APPLE_APP_TOOLS_REPO at one
+# (https://github.com/omiyawaki/apple-app-tools-public).
+TOOLS_REPO="${APPLE_APP_TOOLS_REPO:-$HOME/tools/apple-app-tools}"
 if [[ ! -d "$TOOLS_REPO" ]]; then
-    echo "apple-app-tools repo not found at: $TOOLS_REPO" >&2
+    echo "apple-app-tools checkout not found at: $TOOLS_REPO" >&2
+    echo "Set APPLE_APP_TOOLS_REPO to a clone of apple-app-tools-public." >&2
     exit 1
 fi
 
@@ -87,20 +77,3 @@ swift run --package-path "$TOOLS_REPO" -c release apple-app-tools mac package \
 
 echo "Done: ${APP}"
 
-# Opt-in: when invoked with --verify (or BUILD_APP_VERIFY=1), chain into
-# apple-app-tools auto-deploy verify. This runs the smoke check, publishes
-# the verified/glean-mac/<sha> tag, and notifies peer machines so they
-# auto-deploy this commit. Off by default so the smoke launch does not
-# disrupt iterative development builds.
-VERIFY=0
-for arg in "$@"; do
-    if [[ "$arg" == "--verify" ]]; then
-        VERIFY=1
-    fi
-done
-if [[ "${BUILD_APP_VERIFY:-0}" == "1" ]]; then
-    VERIFY=1
-fi
-if [[ "$VERIFY" == "1" ]]; then
-    "$TOOLS_REPO/.build/release/apple-app-tools" auto-deploy verify --app glean-mac
-fi

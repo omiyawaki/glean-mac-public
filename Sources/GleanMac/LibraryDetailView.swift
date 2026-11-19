@@ -17,7 +17,7 @@ final class LibraryDetailStore {
     private var loadGeneration = 0
 
     init(
-        endpoints: GleanBackendEndpoints = .home,
+        endpoints: GleanBackendEndpoints = .configured,
         recordCache: LibraryRecordCache = .default
     ) {
         let recordLoader = LibraryRecordLoader(endpoints: endpoints)

@@ -2,8 +2,11 @@ import XCTest
 @testable import GleanMac
 
 final class GleanBackendEndpointsTests: XCTestCase {
-    func testHomeEndpointsDeriveEveryBackendRoute() {
-        let endpoints = GleanBackendEndpoints.home
+    func testEndpointsDeriveEveryBackendRoute() {
+        let endpoints = GleanBackendEndpoints(
+            intakeBase: URL(string: "http://backend.example.com:8765")!,
+            libraryBase: URL(string: "http://backend.example.com:8766")!
+        )
 
         XCTAssertEqual(
             endpoints.eventsURL.absoluteString,
@@ -78,5 +81,33 @@ final class GleanBackendEndpointsTests: XCTestCase {
                 .absoluteString,
             "http://127.0.0.1:8766/api/papers/A%20B%2FC/references"
         )
+    }
+
+    func testDefaultsToLocalhostWhenUnconfigured() {
+        let defaults = UserDefaults(suiteName: "GleanBackendEndpointsTests.empty")!
+        defaults.removePersistentDomain(forName: "GleanBackendEndpointsTests.empty")
+        let endpoints = GleanBackendEndpoints.resolve(environment: [:], defaults: defaults)
+
+        XCTAssertEqual(endpoints.intakeBase.absoluteString, "http://localhost:8765")
+        XCTAssertEqual(endpoints.libraryBase.absoluteString, "http://localhost:8766")
+    }
+
+    func testEnvironmentOverridesDefaultsAndIgnoresInvalidValues() {
+        let suite = "GleanBackendEndpointsTests.override"
+        let defaults = UserDefaults(suiteName: suite)!
+        defaults.removePersistentDomain(forName: suite)
+        defaults.set("http://stored.example.com:1", forKey: "GleanIntakeURL")
+        defaults.set("http://stored.example.com:2", forKey: "GleanLibraryURL")
+
+        let endpoints = GleanBackendEndpoints.resolve(
+            environment: [
+                "GLEAN_INTAKE_URL": "http://env.example.com:9",
+                "GLEAN_LIBRARY_URL": "not a url"
+            ],
+            defaults: defaults
+        )
+
+        XCTAssertEqual(endpoints.intakeBase.absoluteString, "http://env.example.com:9")
+        XCTAssertEqual(endpoints.libraryBase.absoluteString, "http://stored.example.com:2")
     }
 }

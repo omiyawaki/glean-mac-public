@@ -4,12 +4,52 @@ struct GleanBackendEndpoints: Equatable, Sendable {
     let intakeBase: URL
     let libraryBase: URL
 
-    /// Fleet production defaults (backend after 2026-09 Glean cutover).
-    /// Static name `home` kept for call-site compatibility.
-    static let home = GleanBackendEndpoints(
-        intakeBase: URL(string: "http://backend.example.com:8765")!,
-        libraryBase: URL(string: "http://backend.example.com:8766")!
+    /// Endpoints used by the app. Resolution order for each base URL:
+    /// environment variable, then the `UserDefaults` key, then a localhost
+    /// default.
+    ///
+    /// - `GLEAN_INTAKE_URL` / `GleanIntakeURL` (default `http://localhost:8765`)
+    /// - `GLEAN_LIBRARY_URL` / `GleanLibraryURL` (default `http://localhost:8766`)
+    ///
+    /// Apps launched from Finder do not inherit shell variables, so use
+    /// `defaults write <bundle id> GleanIntakeURL http://host:8765` there.
+    static let configured = resolve(
+        environment: ProcessInfo.processInfo.environment,
+        defaults: .standard
     )
+
+    static let defaultIntakeBase = URL(string: "http://localhost:8765")!
+    static let defaultLibraryBase = URL(string: "http://localhost:8766")!
+
+    static func resolve(
+        environment: [String: String],
+        defaults: UserDefaults
+    ) -> GleanBackendEndpoints {
+        func base(envKey: String, defaultsKey: String, fallback: URL) -> URL {
+            for raw in [environment[envKey], defaults.string(forKey: defaultsKey)] {
+                if let raw,
+                   !raw.isEmpty,
+                   let url = URL(string: raw),
+                   url.scheme != nil,
+                   url.host != nil {
+                    return url
+                }
+            }
+            return fallback
+        }
+        return GleanBackendEndpoints(
+            intakeBase: base(
+                envKey: "GLEAN_INTAKE_URL",
+                defaultsKey: "GleanIntakeURL",
+                fallback: defaultIntakeBase
+            ),
+            libraryBase: base(
+                envKey: "GLEAN_LIBRARY_URL",
+                defaultsKey: "GleanLibraryURL",
+                fallback: defaultLibraryBase
+            )
+        )
+    }
 
     var eventsURL: URL {
         intakeURL(path: "events")

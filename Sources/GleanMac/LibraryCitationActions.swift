@@ -402,7 +402,7 @@ struct LibraryRecordLoader {
     let session: URLSession
 
     init(
-        endpoints: GleanBackendEndpoints = .home,
+        endpoints: GleanBackendEndpoints = .configured,
         session: URLSession = .shared
     ) {
         self.endpoints = endpoints

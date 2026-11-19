@@ -55,7 +55,7 @@ struct ContentView: View {
     @State private var addPaperController = AddPaperController()
     @State private var pendingLibraryDelete: LibraryDeleteRequest?
 
-    private static let eventsURL = GleanBackendEndpoints.home.eventsURL
+    private static let eventsURL = GleanBackendEndpoints.configured.eventsURL
     private let backlogPDFManualFetcher = BacklogPDFManualFetcher()
     private let ticker = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
 

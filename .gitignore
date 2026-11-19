@@ -6,14 +6,4 @@ DerivedData/
 dist/
 build/visual-qa/
 .DS_Store
-.agents/
 glean.app/
-
-# Reproducible app-icon concept renders stay untracked. Gate review boards are
-# promoted deliberately because they carry user decisions across sessions.
-Resources/AppIconConcepts/**/*.png
-!Resources/AppIconConcepts/Rounds/**/review/*.png
-
-# Local bytecode from reference-board validation.
-Resources/AppIconConcepts/**/__pycache__/
-Resources/AppIconConcepts/**/*.py[cod]

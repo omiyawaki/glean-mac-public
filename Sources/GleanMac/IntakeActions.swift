@@ -14,7 +14,7 @@ import Foundation
 /// then cleans up the optimistic guard). The event path still keeps
 /// other clients and background tabs in sync.
 enum IntakeActions {
-    private static let endpoints = GleanBackendEndpoints.home
+    private static let endpoints = GleanBackendEndpoints.configured
     private static let defaultPostTimeout: TimeInterval = 30
     private static let reviewAddTimeout: TimeInterval = 660
 
@@ -152,7 +152,7 @@ enum IntakeActions {
                        operationID: operationID)
     }
 
-    /// Multipart upload of a local PDF to home's /attach endpoint. The
+    /// Multipart upload of a local PDF to the backend's /attach endpoint. The
     /// server runs a magic-byte check, extracts a DOI from the first
     /// pages, matches against the backlog, and on a hit attaches the
     /// PDF via `glean attach --move` (which also removes the entry

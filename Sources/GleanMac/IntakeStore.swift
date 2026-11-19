@@ -269,7 +269,7 @@ where Entry.ID: Hashable {
 @MainActor
 enum Stores {
     static func backlog(
-        endpoints: GleanBackendEndpoints = .home,
+        endpoints: GleanBackendEndpoints = .configured,
         snapshotCache: BacklogSnapshotCache = .default
     ) -> IntakeStore<BacklogEntry, BacklogResponse> {
         IntakeStore(
@@ -288,7 +288,7 @@ enum Stores {
     }
 
     static func review(
-        endpoints: GleanBackendEndpoints = .home
+        endpoints: GleanBackendEndpoints = .configured
     ) -> IntakeStore<ReviewEntry, ReviewResponse> {
         IntakeStore(
             endpoint: endpoints.intakeURL(path: "api/review-queue"),
@@ -297,7 +297,7 @@ enum Stores {
     }
 
     static func author(
-        endpoints: GleanBackendEndpoints = .home
+        endpoints: GleanBackendEndpoints = .configured
     ) -> IntakeStore<AuthorProposal, AuthorProposalsResponse> {
         IntakeStore(
             endpoint: endpoints.intakeURL(path: "api/author-proposals"),
@@ -306,7 +306,7 @@ enum Stores {
     }
 
     static func library(
-        endpoints: GleanBackendEndpoints = .home,
+        endpoints: GleanBackendEndpoints = .configured,
         snapshotCache: LibrarySnapshotCache = .default,
         localIndexReader: LocalLibraryIndexReader? = .default
     ) -> IntakeStore<LibraryEntry, LibraryResponse> {
